@@ -1,0 +1,1338 @@
+-- ============================================================
+-- ServerScript.lua  |  ServerScriptService > Script
+-- ============================================================
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local DataStoreService  = game:GetService("DataStoreService")
+
+local GameStore = DataStoreService:GetDataStore("ClickerGameV1")
+
+-- ============================================================
+-- REMOTE EVENTS
+-- ============================================================
+
+local remotes = Instance.new("Folder")
+remotes.Name  = "ClickerRemotes"
+remotes.Parent = ReplicatedStorage
+print("ClickerGame SERVER: Remotes folder created")
+
+local function makeRemote(name)
+	local re = Instance.new("RemoteEvent")
+	re.Name   = name
+	re.Parent = remotes
+	return re
+end
+
+local RE_onClick    = makeRemote("OnClick")
+local RE_buyUpgrade = makeRemote("BuyUpgrade")
+local RE_doPrestige = makeRemote("DoPrestige")
+local RE_syncData   = makeRemote("SyncData")
+local RE_rollEgg    = makeRemote("RollEgg")
+local RE_equipSkin     = makeRemote("EquipSkin")
+local RE_claimDaily    = makeRemote("ClaimDaily")
+local RE_buySPUpgrade  = makeRemote("BuySPUpgrade")
+local RE_claimAchieve  = makeRemote("ClaimAchievement")
+local RE_craftGolden   = makeRemote("CraftGolden")        -- NEW: Golden Pet crafting
+local RE_deletePet     = makeRemote("DeletePet")
+local RE_adminCheck    = makeRemote("AdminCheck")
+local RE_adminCmd      = makeRemote("AdminCmd")
+local RE_adminResp     = makeRemote("AdminResp")
+
+-- ============================================================
+-- UPGRADE DEFINITIONS
+-- ============================================================
+
+local UPGRADES = {
+	{ id = "better_finger",    baseCost = 10,    costMult = 1.5, maxLevel = 50, cpc = 1,  cps = 0,  mult = 0 },
+	{ id = "auto_clicker",     baseCost = 50,    costMult = 1.8, maxLevel = 30, cpc = 0,  cps = 1,  mult = 0 },
+	{ id = "double_click",     baseCost = 150,   costMult = 2.0, maxLevel = 20, cpc = 3,  cps = 0,  mult = 0 },
+	{ id = "click_farm",       baseCost = 500,   costMult = 1.9, maxLevel = 20, cpc = 0,  cps = 5,  mult = 0 },
+	{ id = "multiplier_boost", baseCost = 50000, costMult = 6.0, maxLevel = 10, cpc = 0,  cps = 0,  mult = 2 },
+	{ id = "mega_clicker",     baseCost = 5000,  costMult = 2.5, maxLevel = 15, cpc = 20, cps = 0,  mult = 0 },
+	{ id = "robot_army",       baseCost = 10000, costMult = 2.2, maxLevel = 15, cpc = 0,  cps = 25, mult = 0 },
+}
+
+-- ============================================================
+-- STAR POINT UPGRADE DEFINITIONS
+-- ============================================================
+
+local SP_UPGRADES = {
+	{ id="sp_click1",   name="Click Mastery",    cost={1,2,4,7,12},  maxLevel=5, cpc_pct=0.20, desc="+20% CPC per level"       },
+	{ id="sp_auto1",    name="Auto Engine",       cost={2,4,7,12,20}, maxLevel=5, cps_pct=0.25, desc="+25% CPS per level"       },
+	{ id="sp_egg1",     name="Egg Discount",      cost={5,12,22},     maxLevel=3, egg_disc=0.15, desc="-15% egg cost per level"  },
+	{ id="sp_dup1",     name="Recycler",          cost={6,14},        maxLevel=2, dup_pct=0.12,  desc="+12% duplicate refund"    },
+	{ id="sp_mult1",    name="Star Multiplier",   cost={8,20,36},     maxLevel=3, sp_mult=0.20,  desc="+20% SP earned per reset" },
+	{ id="sp_golden",   name="Golden Age",        cost={18,40},       maxLevel=2, all_mult=0.50, desc="+50% to ALL multipliers"  },
+	{ id="sp_crit",     name="Critical Click",    cost={25},          maxLevel=1, crit_pct=0.10, desc="+10% chance for 5x click" },
+}
+
+local function asNumber(v)
+	if type(v) == "number" then return v end
+	if type(v) == "string" then return tonumber(v) end
+	return nil
+end
+
+local function unixMillis()
+	return DateTime.now().UnixTimestampMillis
+end
+
+local function getSPUpgradeDef(id)
+	for _, u in ipairs(SP_UPGRADES) do
+		if u.id == id then return u end
+	end
+end
+
+local function getSPUpgradeCost(id, level)
+	local def = getSPUpgradeDef(id)
+	if not def then return math.huge end
+	return def.cost[level + 1] or math.huge
+end
+
+-- ============================================================
+-- ACHIEVEMENT DEFINITIONS
+-- ============================================================
+
+local ACHIEVEMENTS = {
+	{ id="lclicks_1k",    req_lifetime=1000,          reward_type="cpc", reward_val=0.03,  reward_text="+3% CPC"     },
+	{ id="lclicks_10k",   req_lifetime=10000,         reward_type="cpc", reward_val=0.05,  reward_text="+5% CPC"     },
+	{ id="lclicks_100k",  req_lifetime=100000,        reward_type="cpc", reward_val=0.08,  reward_text="+8% CPC"     },
+	{ id="lclicks_1M",    req_lifetime=1000000,       reward_type="cps", reward_val=0.12,  reward_text="+12% CPS"    },
+	{ id="lclicks_10M",   req_lifetime=10000000,      reward_type="all", reward_val=0.18,  reward_text="+18% All"    },
+	{ id="owned_100k",    req_owned=100000,            reward_type="cpc", reward_val=0.05,  reward_text="+5% CPC"     },
+	{ id="owned_10M",     req_owned=10000000,          reward_type="cps", reward_val=0.08,  reward_text="+8% CPS"     },
+	{ id="owned_1B",      req_owned=1000000000,        reward_type="all", reward_val=0.12,  reward_text="+12% All"    },
+	{ id="owned_100B",    req_owned=100000000000,      reward_type="cpc", reward_val=0.20,  reward_text="+20% CPC"    },
+	{ id="owned_1T",      req_owned=1000000000000,     reward_type="all", reward_val=0.30,  reward_text="+30% All"    },
+	{ id="prestige_1",    req_prestige=1,              reward_type="sp",  reward_val=0.05,  reward_text="+5% SP Gain" },
+	{ id="prestige_5",    req_prestige=5,              reward_type="cps", reward_val=0.10,  reward_text="+10% CPS"    },
+	{ id="prestige_10",   req_prestige=10,             reward_type="all", reward_val=0.20,  reward_text="+20% All"    },
+	{ id="pet_first",     req_pets=1,                  reward_type="cpc", reward_val=0.05,  reward_text="+5% CPC"     },
+	{ id="pet_5",         req_pets=5,                  reward_type="cps", reward_val=0.08,  reward_text="+8% CPS"     },
+	{ id="pet_10",        req_pets=10,                 reward_type="cpc", reward_val=0.12,  reward_text="+12% CPC"    },
+	{ id="legendary_pet", req_legendary=true,          reward_type="cps", reward_val=0.12,  reward_text="+12% CPS"    },
+	{ id="mythic_pet",    req_mythic=true,              reward_type="all", reward_val=0.25,  reward_text="+25% All"    },
+	{ id="upgrade_max1",  req_any_max=true,             reward_type="cps", reward_val=0.10,  reward_text="+10% CPS"    },
+	{ id="sp_10",         req_sp=10,                   reward_type="sp",  reward_val=0.05,  reward_text="+5% SP Gain" },
+	{ id="sp_50",         req_sp=50,                   reward_type="all", reward_val=0.15,  reward_text="+15% All"    },
+	{ id="streak_3",      req_streak=3,                reward_type="cpc", reward_val=0.05,  reward_text="+5% CPC"     },
+	{ id="streak_7",      req_streak=7,                reward_type="cpc", reward_val=0.12,  reward_text="+12% CPC"    },
+}
+
+-- ============================================================
+-- DAILY REWARDS
+-- ============================================================
+
+local DAILY_SESSION_REQ = 3600
+local DAILY_CD_SECONDS  = 86400
+local DAILY_MISS_RESET_WINDOW = DAILY_CD_SECONDS
+
+local DAILY_REWARDS = {
+	{ day=1, clicks=200000       },
+	{ day=2, clicks=5000000      },
+	{ day=3, clicks=36000000     },
+	{ day=4, clicks=300000000    },
+	{ day=5, clicks=3000000000   },
+	{ day=6, clicks=30000000000  },
+	{ day=7, clicks=300000000000 },
+}
+
+-- ============================================================
+-- ADMIN SYSTEM
+-- ============================================================
+
+local ADMINS = {
+	[1678494560] = true,
+	[677931229]  = true,
+}
+
+local function isAdmin(player)
+	return ADMINS[player.UserId] == true
+end
+
+-- ============================================================
+-- GOLDEN PET HELPERS
+-- ============================================================
+
+local function isGoldenPet(petId)
+	return type(petId) == "string" and petId:sub(1, 7) == "golden_"
+end
+
+local function getGoldenBasePetId(petId)
+	return type(petId) == "string" and petId:match("^golden_(.+)$") or nil
+end
+
+-- ============================================================
+-- PET / SKIN DEFINITIONS
+-- ============================================================
+
+local PETS = {
+	{ id = "cat",      egg = 1, rarity = "Common",    chance = 180, multiplier = 1.1  },
+	{ id = "rabbit",   egg = 1, rarity = "Common",    chance = 108, multiplier = 1.2  },
+	{ id = "fox",      egg = 1, rarity = "Uncommon",  chance = 60,  multiplier = 1.5  },
+	{ id = "wolf",     egg = 1, rarity = "Rare",      chance = 32,  multiplier = 2.0  },
+	{ id = "bear",     egg = 1, rarity = "Epic",      chance = 12,  multiplier = 2.5  },
+	{ id = "goldcat",  egg = 1, rarity = "Legendary", chance = 4,   multiplier = 3.5  },
+	{ id = "hellfire", egg = 1, rarity = "Mythic",    chance = 1,   multiplier = 6.0  },
+	{ id = "panda",    egg = 2, rarity = "Common",    chance = 76,  multiplier = 2.0  },
+	{ id = "tiger",    egg = 2, rarity = "Common",    chance = 48,  multiplier = 2.5  },
+	{ id = "lion",     egg = 2, rarity = "Uncommon",  chance = 36,  multiplier = 3.0  },
+	{ id = "dragon",   egg = 2, rarity = "Rare",      chance = 24,  multiplier = 4.5  },
+	{ id = "phoenix",  egg = 2, rarity = "Epic",      chance = 10,  multiplier = 6.0  },
+	{ id = "crystal",  egg = 2, rarity = "Legendary", chance = 4,   multiplier = 9.0  },
+	{ id = "abyssal",  egg = 2, rarity = "Mythic",    chance = 1,   multiplier = 14.0 },
+	{ id = "robot",    egg = 3, rarity = "Common",    chance = 62,  multiplier = 4.0  },
+	{ id = "alien",    egg = 3, rarity = "Uncommon",  chance = 50,  multiplier = 5.5  },
+	{ id = "darkwolf", egg = 3, rarity = "Uncommon",  chance = 40,  multiplier = 7.0  },
+	{ id = "thunder",  egg = 3, rarity = "Rare",      chance = 28,  multiplier = 9.0  },
+	{ id = "godcat",   egg = 3, rarity = "Epic",      chance = 14,  multiplier = 13.0 },
+	{ id = "cosmos",   egg = 3, rarity = "Legendary", chance = 4,   multiplier = 20.0 },
+	{ id = "omega",    egg = 3, rarity = "Mythic",    chance = 1,   multiplier = 35.0 },
+}
+
+local EGG_COSTS = { [1] = 50000, [2] = 10000000, [3] = 20000000000 }
+local MAX_EGG_DISCOUNT = 0.45
+
+local function getEffectiveEggCost(data, eggNum)
+	local baseCost = EGG_COSTS[eggNum]
+	if not baseCost then return nil end
+	local discount = math.clamp(data.eggDiscount or 0, 0, MAX_EGG_DISCOUNT)
+	return math.max(1, math.floor(baseCost * (1 - discount)))
+end
+
+-- ============================================================
+-- HELPER FUNCTIONS
+-- ============================================================
+
+local function getPetDef(id)
+	for _, p in ipairs(PETS) do
+		if p.id == id then return p end
+	end
+end
+
+local function getUpgradeDef(id)
+	for _, u in ipairs(UPGRADES) do
+		if u.id == id then return u end
+	end
+end
+
+local function getUpgradeCost(id, level)
+	local def = getUpgradeDef(id)
+	if not def then return math.huge end
+	return math.floor(def.baseCost * (def.costMult ^ level))
+end
+
+local function getSkinMultiplier(skinId)
+	if skinId == "dog" or not skinId then return 1.0 end
+	-- Golden pet: multiplier = base pet * 2
+	if isGoldenPet(skinId) then
+		local baseId = getGoldenBasePetId(skinId)
+		if baseId then
+			if baseId == "dog" then return 2.0 end
+			local def = getPetDef(baseId)
+			if def then return def.multiplier * 2 end
+		end
+		return 1.0
+	end
+	local def = getPetDef(skinId)
+	return def and def.multiplier or 1.0
+end
+
+local function hasInInventory(data, petId)
+	for _, id in ipairs(data.inventory) do
+		if id == petId then return true end
+	end
+	return false
+end
+
+local function getPityTables(data)
+	data.pityLeg = type(data.pityLeg) == "table" and data.pityLeg or {0,0,0}
+	data.pityMythic = type(data.pityMythic) == "table" and data.pityMythic or {0,0,0}
+	for i = 1, 3 do
+		data.pityLeg[i] = math.max(0, math.floor(asNumber(data.pityLeg[i]) or 0))
+		data.pityMythic[i] = math.max(0, math.floor(asNumber(data.pityMythic[i]) or 0))
+	end
+	return data.pityLeg, data.pityMythic
+end
+
+local function rollPet(eggNum)
+	local pool = {}
+	local total = 0
+	for _, p in ipairs(PETS) do
+		if p.egg == eggNum then
+			table.insert(pool, p)
+			total += p.chance
+		end
+	end
+	local roll = math.random(1, total)
+	local cum  = 0
+	for _, p in ipairs(pool) do
+		cum += p.chance
+		if roll <= cum then return p end
+	end
+	return pool[1]
+end
+
+local function rollPetByRarities(eggNum, raritySet)
+	local pool = {}
+	local total = 0
+	for _, p in ipairs(PETS) do
+		if p.egg == eggNum and raritySet[p.rarity] then
+			table.insert(pool, p)
+			total += p.chance
+		end
+	end
+	if #pool == 0 then
+		return rollPet(eggNum)
+	end
+	local roll = math.random(1, total)
+	local cum = 0
+	for _, p in ipairs(pool) do
+		cum += p.chance
+		if roll <= cum then return p end
+	end
+	return pool[#pool]
+end
+
+
+local function recalculateStats(data)
+	local cpc  = 1
+	local cps  = 0
+	local mult = 1
+
+	local sp = data.starPoints or 0
+	local spBonus = 1 + sp * 0.08
+
+	for _, def in ipairs(UPGRADES) do
+		local lv = data.upgrades[def.id] or 0
+		cpc += def.cpc * lv
+		cps += def.cps * lv
+		if def.mult > 0 then
+			mult += def.mult * 0.5 * lv
+		end
+	end
+
+	local sp_cpc_bonus = 1
+	local sp_cps_bonus = 1
+	local sp_all_bonus = 1
+	data.eggDiscount = 0
+	data.critChance  = 0
+	data.dupBonus    = 0.15
+
+	for _, def in ipairs(SP_UPGRADES) do
+		local lv = data.spUpgrades[def.id] or 0
+		if lv > 0 then
+			if def.cpc_pct then sp_cpc_bonus += def.cpc_pct * lv end
+			if def.cps_pct then sp_cps_bonus += def.cps_pct * lv end
+			if def.all_mult then sp_all_bonus += def.all_mult * lv end
+			if def.egg_disc then data.eggDiscount += def.egg_disc * lv end
+			if def.crit_pct then data.critChance  += def.crit_pct * lv end
+			if def.dup_pct  then data.dupBonus    = (data.dupBonus or 0) + def.dup_pct * lv end
+		end
+	end
+
+	local skinMult = getSkinMultiplier(data.equippedSkin)
+
+	local ach_cpc = 1
+	local ach_cps = 1
+	local ach_all = 1
+	data.achSpBonus = 1
+	if data.claimedAchievements then
+		for _, ach in ipairs(ACHIEVEMENTS) do
+			if data.claimedAchievements[ach.id] then
+				if ach.reward_type == "cpc" then ach_cpc += ach.reward_val end
+				if ach.reward_type == "cps" then ach_cps += ach.reward_val end
+				if ach.reward_type == "all" then ach_all += ach.reward_val end
+				if ach.reward_type == "sp"  then data.achSpBonus += ach.reward_val end
+			end
+		end
+	end
+
+	data.clicksPerClick  = math.max(1, cpc) * spBonus * mult * sp_cpc_bonus * sp_all_bonus * skinMult * ach_cpc * ach_all
+	data.clicksPerSecond = cps              * spBonus * mult * sp_cps_bonus * sp_all_bonus * skinMult * ach_cps * ach_all
+end
+
+-- ============================================================
+-- PLAYER DATA
+-- ============================================================
+
+local playerData = {}
+
+local function createPlayerData(player)
+	local data = {
+		clicks         = 0,
+		totalClicks    = 0,
+		prestige       = 0,
+		upgrades       = {},
+		clicksPerClick = 1,
+		clicksPerSecond= 0,
+		inventory      = { "dog" },
+		equippedSkin   = "dog",
+		pityLeg        = {0,0,0},
+		pityMythic     = {0,0,0},
+		nextGoal       = nil,
+		starPoints     = 0,
+		spUpgrades     = {},
+		eggDiscount    = 0,
+		critChance     = 0,
+		achievements        = {},
+		claimedAchievements = {},
+		dailyStreak       = 0,
+		lastLoginDate     = "",
+		dailyRewardDay     = 1,
+		dailyNextClaimTime = 0,
+		dailySessionSeconds= 0,
+		totalSPEarned  = 0,
+		lifetimeClicks = 0,
+		petCounts      = { dog = 1 },  -- NEW: { [petId] = count }, survives prestige
+		sessionKey     = unixMillis() + math.random(0, 999),
+		saveSeq        = 0,
+	}
+	for _, def in ipairs(UPGRADES) do
+		data.upgrades[def.id] = 0
+	end
+	for _, def in ipairs(SP_UPGRADES) do
+		data.spUpgrades[def.id] = 0
+	end
+	playerData[player.UserId] = data
+	return data
+end
+
+local function checkAchievements(data, player)
+	local newlyUnlocked = {}
+
+	for _, ach in ipairs(ACHIEVEMENTS) do
+		if not data.achievements[ach.id] then
+			local unlocked = false
+
+			if ach.req_lifetime and (data.lifetimeClicks or 0) >= ach.req_lifetime then unlocked = true end
+			if ach.req_owned    and data.clicks >= ach.req_owned                   then unlocked = true end
+			if ach.req_prestige and data.prestige   >= ach.req_prestige then unlocked = true end
+			if ach.req_sp      and (data.totalSPEarned or 0) >= ach.req_sp then unlocked = true end
+			if ach.req_streak  and (data.dailyStreak or 0) >= ach.req_streak then unlocked = true end
+
+			if ach.req_pets then
+				local petCount = #data.inventory - 1
+				if petCount >= ach.req_pets then unlocked = true end
+			end
+
+			-- Golden pets count as Legendary+ for achievement purposes
+			if ach.req_legendary then
+				for _, petId in ipairs(data.inventory) do
+					if isGoldenPet(petId) then
+						unlocked = true; break
+					end
+					local def = getPetDef(petId)
+					local rarity = def and def.rarity or "Default"
+					if rarity == "Legendary" or rarity == "Mythic" then
+						unlocked = true; break
+					end
+				end
+			end
+
+			-- Golden pets count as Mythic for achievement purposes
+			if ach.req_mythic then
+				for _, petId in ipairs(data.inventory) do
+					if isGoldenPet(petId) then unlocked = true; break end
+					local def = getPetDef(petId)
+					if def and def.rarity == "Mythic" then unlocked = true; break end
+				end
+			end
+
+			if ach.req_any_max then
+				local UPGRADES_MAX = {
+					better_finger=50, auto_clicker=30, double_click=20,
+					click_farm=20, multiplier_boost=10, mega_clicker=15, robot_army=15,
+				}
+				for id, maxLv in pairs(UPGRADES_MAX) do
+					if (data.upgrades[id] or 0) >= maxLv then unlocked = true break end
+				end
+			end
+
+			if unlocked then
+				data.achievements[ach.id] = true
+				table.insert(newlyUnlocked, ach)
+			end
+		end
+	end
+
+	if #newlyUnlocked > 0 then
+		recalculateStats(data)
+		data.newAchievements = newlyUnlocked
+	end
+end
+
+local function normalizeDailyProgress(data, now)
+	now = now or os.time()
+
+	data.dailyRewardDay = math.clamp(math.floor(asNumber(data.dailyRewardDay) or 1), 1, 7)
+	data.dailyStreak = math.max(0, math.floor(asNumber(data.dailyStreak) or 0))
+	data.dailySessionSeconds = math.max(0, math.min(DAILY_SESSION_REQ, math.floor(asNumber(data.dailySessionSeconds) or 0)))
+
+	data.dailyNextClaimTime = math.max(0, asNumber(data.dailyNextClaimTime) or 0)
+
+	if data.dailyRewardDay > 1 then
+		local lateBy = now - data.dailyNextClaimTime
+		if lateBy > DAILY_MISS_RESET_WINDOW then
+			data.dailyRewardDay = 1
+			data.dailyStreak = 0
+			data.dailySessionSeconds = 0
+			data.dailyNextClaimTime = 0
+		end
+	end
+end
+
+local MAX_PRESTIGE = 20
+local PRESTIGE_BASE_REQ = 1000000
+
+local function fmtGoal(n)
+	n = math.floor(asNumber(n) or 0)
+	if n >= 1e12 then return string.format("%.2fT", n/1e12)
+	elseif n >= 1e9 then return string.format("%.2fB", n/1e9)
+	elseif n >= 1e6 then return string.format("%.2fM", n/1e6)
+	elseif n >= 1e3 then return string.format("%.1fK", n/1e3)
+	else return tostring(n) end
+end
+
+local function getPrestigeRequirement(prestige)
+	return PRESTIGE_BASE_REQ * (10 ^ math.max(0, prestige or 0))
+end
+
+local function getUpgradeScore(upg)
+	return math.max((upg.cpc or 0) * 1.0 + (upg.cps or 0) * 1.45 + (upg.mult or 0) * 7.5, 1)
+end
+
+local function prettifyId(id)
+	local s = tostring(id or ""):gsub("_", " ")
+	return (s:gsub("^%l", string.upper))
+end
+
+local function getNextGoalSnapshot(data)
+	local clicks = math.max(0, math.floor(asNumber(data.clicks) or 0))
+	local totalClicks = math.max(0, math.floor(asNumber(data.totalClicks) or 0))
+	local prestige = math.max(0, math.floor(asNumber(data.prestige) or 0))
+	local presReq = getPrestigeRequirement(prestige)
+	local isMaxPrestige = prestige >= MAX_PRESTIGE
+	local canPrestige = (not isMaxPrestige) and totalClicks >= presReq
+	local prestigeProgress = (isMaxPrestige and 1) or math.clamp(totalClicks / presReq, 0, 1)
+	local prestigeAway = math.max(0, presReq - totalClicks)
+	local prestigeSoon = (not isMaxPrestige) and prestigeProgress >= 0.85
+
+	local bestAffordable, bestSoonest
+	for _, upg in ipairs(UPGRADES) do
+		local lv = data.upgrades[upg.id] or 0
+		if lv < upg.maxLevel then
+			local cost = getUpgradeCost(upg.id, lv)
+			local progress = (cost > 0) and math.clamp(clicks / cost, 0, 1) or 0
+			local score = getUpgradeScore(upg)
+			local cand = {
+				type = "UPGRADE",
+				name = prettifyId(upg.id),
+				cost = cost,
+				progress = progress,
+				away = fmtGoal(math.max(0, cost - clicks)) .. " clicks away",
+				detail = string.format("+%.1f value | Lv %d/%d", score, lv, upg.maxLevel),
+				score = score,
+				canAfford = cost <= clicks,
+			}
+			if not bestSoonest or cost < bestSoonest.cost or (cost == bestSoonest.cost and progress > bestSoonest.progress) then
+				bestSoonest = cand
+			end
+			if cand.canAfford and (not bestAffordable or cand.score > bestAffordable.score or (cand.score == bestAffordable.score and cand.cost < bestAffordable.cost)) then
+				bestAffordable = cand
+			end
+		end
+	end
+
+	local pitLeg = data.pityLeg or {0,0,0}
+	local pitMyth = data.pityMythic or {0,0,0}
+	local pityGoal
+	for eggNum = 1, 3 do
+		local l = math.max(0, math.floor(asNumber(pitLeg[eggNum]) or 0))
+		local m = math.max(0, math.floor(asNumber(pitMyth[eggNum]) or 0))
+		local legRemaining = math.max(0, 30 - l)
+		local mythRemaining = math.max(0, 100 - m)
+		if legRemaining <= 10 and (not pityGoal or legRemaining < pityGoal.remaining) then
+			pityGoal = { type = "PITY", name = string.format("Hatch Egg %d", eggNum), progress = math.clamp(l / 30, 0, 1), away = string.format("%d hatch%s away", legRemaining, legRemaining == 1 and "" or "es"), detail = string.format("Egg %d • Legendary pity %d/30", eggNum, l), score = 100 - legRemaining, remaining = legRemaining }
+		end
+		if mythRemaining <= 20 and (not pityGoal or mythRemaining < pityGoal.remaining) then
+			pityGoal = { type = "PITY", name = string.format("Hatch Egg %d", eggNum), progress = math.clamp(m / 100, 0, 1), away = string.format("%d hatch%s away", mythRemaining, mythRemaining == 1 and "" or "es"), detail = string.format("Egg %d • Mythic pity %d/100", eggNum, m), score = 100 - mythRemaining, remaining = mythRemaining }
+		end
+	end
+
+	local goal
+	if canPrestige then
+		goal = { type = "PRESTIGE", name = "Prestige " .. (prestige + 1), progress = 1, away = "Ready to cash out now", detail = string.format("Spend %s total clicks for %d SP", fmtGoal(presReq), math.max(1, math.floor(prestige / 3) + 1)), score = 999 }
+	elseif prestigeSoon then
+		goal = { type = "PRESTIGE", name = "Prestige " .. (prestige + 1), progress = prestigeProgress, away = fmtGoal(prestigeAway) .. " total clicks away", detail = string.format("Cash out for +%d SP", math.max(1, math.floor(prestige / 3) + 1)), score = prestigeProgress + 0.5 }
+	elseif bestAffordable then
+		goal = bestAffordable
+	elseif pityGoal and (not bestSoonest or pityGoal.progress >= math.max(0.5, bestSoonest.progress - 0.15)) then
+		goal = pityGoal
+	else
+		goal = bestSoonest or { type = "PRESTIGE", name = "Prestige " .. (prestige + 1), progress = prestigeProgress, away = fmtGoal(prestigeAway) .. " total clicks away", detail = string.format("Cash out for +%d SP", math.max(1, math.floor(prestige / 3) + 1)), score = prestigeProgress }
+	end
+
+	if goal and goal.type == "UPGRADE" and pityGoal then
+		goal.detail = goal.detail .. " | " .. pityGoal.detail
+	elseif goal and goal.type == "PRESTIGE" and pityGoal then
+		goal.detail = goal.detail .. " | " .. pityGoal.detail
+	end
+
+	return goal
+end
+
+local function syncPlayer(player)
+	local data = playerData[player.UserId]
+	if data then
+		local now = os.time()
+		local is24h = now < (data.dailyNextClaimTime or 0)
+		local secsRemaining = 0
+		if is24h then
+			secsRemaining = math.max(0, math.floor(data.dailyNextClaimTime - now))
+		else
+			local sessionDone = data.dailySessionSeconds or 0
+			secsRemaining = math.max(0, DAILY_SESSION_REQ - sessionDone)
+		end
+		data.dailySecondsRemaining = secsRemaining
+		data.dailyIs24hPhase       = is24h
+		data.dailySessionSecsLeft  = math.max(0, DAILY_SESSION_REQ - (data.dailySessionSeconds or 0))
+		getPityTables(data)
+		data.nextGoal = getNextGoalSnapshot(data)
+		RE_syncData:FireClient(player, data)
+		data.lastSPEarned       = 0
+		data.newAchievements    = {}
+		data.pendingDailyReward = nil
+	end
+end
+
+-- ============================================================
+-- SERVER EVENT HANDLERS
+-- ============================================================
+
+RE_deletePet.OnServerEvent:Connect(function(player, petId, amount)
+	local data = playerData[player.UserId]
+	if not data then return end
+	if type(petId) ~= "string" then return end
+
+	data.petCounts = data.petCounts or {}
+	local count = data.petCounts[petId] or 0
+	if count <= 0 then return end
+
+	local amt = math.clamp(math.floor(asNumber(amount) or 1), 1, count)
+	data.petCounts[petId] = count - amt
+
+	if data.petCounts[petId] <= 0 then
+		data.petCounts[petId] = nil
+		for i = #data.inventory, 1, -1 do
+			if data.inventory[i] == petId then table.remove(data.inventory, i) break end
+		end
+		if data.equippedSkin == petId then data.equippedSkin = "dog" end
+	end
+	recalculateStats(data)
+	syncPlayer(player)
+end)
+
+local clickCounts = {}
+local MAX_ACCEPTED_CLICKS_PER_SEC = 25
+local CLICK_RATE_BURST_ALLOWANCE = 15
+local clickRateState = {}
+
+local function consumeClickBudget(userId, requestedClicks)
+	requestedClicks = math.max(0, math.floor(asNumber(requestedClicks) or 0))
+	if requestedClicks <= 0 then return 0 end
+
+	local now = tick()
+	local maxTokens = MAX_ACCEPTED_CLICKS_PER_SEC + CLICK_RATE_BURST_ALLOWANCE
+	local state = clickRateState[userId]
+	if not state then
+		state = { tokens = maxTokens, last = now }
+		clickRateState[userId] = state
+	end
+
+	local elapsed = math.max(0, now - (state.last or now))
+	state.last = now
+	state.tokens = math.min(maxTokens, (state.tokens or maxTokens) + elapsed * MAX_ACCEPTED_CLICKS_PER_SEC)
+
+	local allowed = math.min(requestedClicks, math.floor(state.tokens))
+	if allowed <= 0 then return 0 end
+	state.tokens -= allowed
+	return allowed
+end
+
+RE_onClick.OnServerEvent:Connect(function(player, count)
+	local data = playerData[player.UserId]
+	if not data then return end
+
+	local uid = player.UserId
+	local requested = math.min(math.max(math.floor(asNumber(count) or 1), 1), 45)
+	local n = consumeClickBudget(uid, requested)
+	if n <= 0 then return end
+	local baseEarn = math.max(0, asNumber(data.clicksPerClick) or 0)
+	if baseEarn <= 0 then return end
+
+	for _ = 1, n do
+		local earned = baseEarn
+		local critChance = data.critChance or 0
+		if critChance > 0 and math.random() < critChance then
+			earned = earned * 5
+		end
+		data.clicks         += earned
+		data.totalClicks    += earned
+	end
+	data.lifetimeClicks = (data.lifetimeClicks or 0) + n
+
+	checkAchievements(data, player)
+	local hasNewAch = data.newAchievements and #data.newAchievements > 0
+
+	clickCounts[uid] = (clickCounts[uid] or 0) + n
+	if clickCounts[uid] >= 5 or hasNewAch then
+		clickCounts[uid] = 0
+		syncPlayer(player)
+	end
+end)
+
+RE_buyUpgrade.OnServerEvent:Connect(function(player, upgradeId)
+	local data = playerData[player.UserId]
+	if not data then return end
+	if type(upgradeId) ~= "string" then return end
+	local def  = getUpgradeDef(upgradeId)
+	if not def then return end
+	local level = data.upgrades[upgradeId] or 0
+	if level >= def.maxLevel then return end
+	local cost = getUpgradeCost(upgradeId, level)
+	if data.clicks < cost then return end
+	data.clicks -= cost
+	data.upgrades[upgradeId] = level + 1
+	recalculateStats(data)
+	checkAchievements(data, player)
+	syncPlayer(player)
+end)
+
+local MAX_PRESTIGE = 20
+
+RE_doPrestige.OnServerEvent:Connect(function(player)
+	local data = playerData[player.UserId]
+	if not data then return end
+	if data._prestiging then return end
+	if data.prestige >= MAX_PRESTIGE then return end
+	local required = 1000000 * (10 ^ data.prestige)
+	if data.totalClicks < required then return end
+	data._prestiging = true
+
+	local spMagnetLv = data.spUpgrades["sp_mult1"] or 0
+	local spMultiplier = 1 + (spMagnetLv * 0.20)
+	local baseSP = math.floor(data.prestige / 3) + 1
+	local spEarned = math.max(1, math.floor(baseSP * spMultiplier))
+	data.starPoints = (data.starPoints or 0) + spEarned
+	data.totalSPEarned = (data.totalSPEarned or 0) + spEarned
+	data.lastSPEarned = spEarned
+
+	data.prestige    += 1
+	data.clicks       = 0
+	data.totalClicks  = 0
+	for _, def in ipairs(UPGRADES) do
+		data.upgrades[def.id] = 0
+	end
+	-- petCounts, inventory, equippedSkin are NOT reset on prestige
+	data._prestiging = nil
+	recalculateStats(data)
+	checkAchievements(data, player)
+	syncPlayer(player)
+end)
+
+RE_rollEgg.OnServerEvent:Connect(function(player, eggNum)
+	local data = playerData[player.UserId]
+	if not data then return end
+
+	local function fireRollFail(reason, payloadEggNum, requiredClicks)
+		RE_rollEgg:FireClient(player, {
+			ok = false,
+			eggNum = payloadEggNum,
+			reason = reason or "INTERNAL_ERROR",
+			requiredClicks = math.max(0, math.floor(asNumber(requiredClicks) or 0)),
+			currentClicks = math.max(0, math.floor(asNumber(data.clicks) or 0)),
+		})
+	end
+
+	local parsedEggNum = asNumber(eggNum)
+	if not parsedEggNum or parsedEggNum ~= math.floor(parsedEggNum) then
+		fireRollFail("INVALID_EGG", nil, 0); return
+	end
+	parsedEggNum = math.floor(parsedEggNum)
+	if parsedEggNum < 1 or parsedEggNum > 3 then
+		fireRollFail("INVALID_EGG", parsedEggNum, 0); return
+	end
+
+	local cost = getEffectiveEggCost(data, parsedEggNum)
+	if not cost then fireRollFail("INTERNAL_ERROR", parsedEggNum, 0); return end
+	if data.clicks < cost then fireRollFail("INSUFFICIENT_CLICKS", parsedEggNum, cost); return end
+
+	local ok, err = pcall(function()
+		data.clicks -= cost
+
+		local pityLeg, pityMythic = getPityTables(data)
+		local legPity = pityLeg[parsedEggNum] or 0
+		local mythPity = pityMythic[parsedEggNum] or 0
+
+		local pet
+		if mythPity >= 100 then
+			pet = rollPetByRarities(parsedEggNum, { Mythic = true })
+		elseif legPity >= 30 then
+			pet = rollPetByRarities(parsedEggNum, { Legendary = true, Mythic = true })
+		else
+			pet = rollPet(parsedEggNum)
+		end
+		if not pet then error("rollPet returned nil") end
+
+		data.petCounts = data.petCounts or {}
+		local isDuplicate = hasInInventory(data, pet.id)
+		local bonusClicks = 0
+
+		if pet.rarity == "Mythic" then
+			pityLeg[parsedEggNum] = 0
+			pityMythic[parsedEggNum] = 0
+		elseif pet.rarity == "Legendary" then
+			pityLeg[parsedEggNum] = 0
+			pityMythic[parsedEggNum] = (mythPity or 0) + 1
+		else
+			pityLeg[parsedEggNum] = (legPity or 0) + 1
+			pityMythic[parsedEggNum] = (mythPity or 0) + 1
+		end
+
+		if not isDuplicate then
+			table.insert(data.inventory, pet.id)
+			data.petCounts[pet.id] = 1
+		else
+			data.petCounts[pet.id] = (data.petCounts[pet.id] or 1) + 1
+		end
+
+		recalculateStats(data)
+		checkAchievements(data, player)
+		syncPlayer(player)
+
+		RE_rollEgg:FireClient(player, {
+			ok = true,
+			eggNum = parsedEggNum,
+			petId = pet.id,
+			rarity = pet.rarity,
+			multiplier = pet.multiplier,
+			isDuplicate = isDuplicate,
+			bonusClicks = bonusClicks,
+			cost = cost,
+		})
+	end)
+
+	if not ok then
+		warn("RollEgg failed for " .. player.Name .. ": " .. tostring(err))
+		fireRollFail("INTERNAL_ERROR", parsedEggNum, cost)
+	end
+end)
+
+RE_buySPUpgrade.OnServerEvent:Connect(function(player, upgradeId)
+	local data = playerData[player.UserId]
+	if not data then return end
+	if type(upgradeId) ~= "string" then return end
+	local def = getSPUpgradeDef(upgradeId)
+	if not def then return end
+	local level = data.spUpgrades[upgradeId] or 0
+	if level >= def.maxLevel then return end
+	local cost = getSPUpgradeCost(upgradeId, level)
+	if (data.starPoints or 0) < cost then return end
+	data.starPoints -= cost
+	data.spUpgrades[upgradeId] = level + 1
+	recalculateStats(data)
+	syncPlayer(player)
+end)
+
+RE_claimAchieve.OnServerEvent:Connect(function(player, achId)
+	local data = playerData[player.UserId]
+	if not data then return end
+	if type(achId) ~= "string" then return end
+	if not data.achievements[achId] then return end
+	if data.claimedAchievements[achId] then return end
+	local def = nil
+	for _, a in ipairs(ACHIEVEMENTS) do
+		if a.id == achId then def = a break end
+	end
+	if not def then return end
+	data.claimedAchievements[achId] = true
+	recalculateStats(data)
+	syncPlayer(player)
+end)
+
+RE_claimDaily.OnServerEvent:Connect(function(player)
+	local data = playerData[player.UserId]
+	if not data then return end
+	local now = os.time()
+	normalizeDailyProgress(data, now)
+	if now < (data.dailyNextClaimTime or 0) then return end
+	if (data.dailySessionSeconds or 0) < DAILY_SESSION_REQ then return end
+	local day = data.dailyRewardDay or 1
+	if day < 1 or day > 7 then day = 1 end
+	local reward = DAILY_REWARDS[day]
+	if not reward then return end
+	data.clicks      += reward.clicks
+	data.totalClicks += reward.clicks
+	if (reward.sp or 0) > 0 then
+		data.starPoints    = (data.starPoints or 0) + reward.sp
+		data.totalSPEarned = (data.totalSPEarned or 0) + reward.sp
+	end
+	data.dailyStreak = (data.dailyStreak or 0) + 1
+	data.dailyRewardDay     = (day % 7) + 1
+	data.dailyNextClaimTime = now + DAILY_CD_SECONDS
+	data.dailySessionSeconds = 0
+	data.pendingDailyReward = reward
+	recalculateStats(data)
+	checkAchievements(data, player)
+	syncPlayer(player)
+end)
+
+RE_equipSkin.OnServerEvent:Connect(function(player, skinId)
+	local data = playerData[player.UserId]
+	if not data then return end
+	if type(skinId) ~= "string" then return end
+	if skinId ~= "dog" and not hasInInventory(data, skinId) then return end
+	data.equippedSkin = skinId
+	recalculateStats(data)
+	syncPlayer(player)
+end)
+
+-- ============================================================
+-- GOLDEN PET CRAFTING
+-- ============================================================
+
+RE_craftGolden.OnServerEvent:Connect(function(player, petId)
+	local data = playerData[player.UserId]
+	if not data then return end
+	if type(petId) ~= "string" then return end
+	if isGoldenPet(petId) then return end                           -- no golden-of-golden
+
+	local baseDef = getPetDef(petId)
+	if not baseDef and petId ~= "dog" then return end              -- unknown pet
+
+	data.petCounts = data.petCounts or {}
+	local count = data.petCounts[petId] or 0
+	if count < 5 then return end                                   -- need 5 copies
+
+	local goldenId = "golden_" .. petId
+	-- Consume 5 copies
+	data.petCounts[petId] = count - 5
+	if data.petCounts[petId] <= 0 then
+		data.petCounts[petId] = nil
+		-- Remove from unique inventory array
+		for i = #data.inventory, 1, -1 do
+			if data.inventory[i] == petId then
+				table.remove(data.inventory, i)
+				break
+			end
+		end
+		-- Auto-equip the new golden pet if the base one was equipped
+		if data.equippedSkin == petId then
+			data.equippedSkin = goldenId
+		end
+	end
+
+	-- Add golden version
+	data.petCounts[goldenId] = (data.petCounts[goldenId] or 0) + 1
+	if not hasInInventory(data, goldenId) then
+		table.insert(data.inventory, goldenId)
+	end
+
+	recalculateStats(data)
+	checkAchievements(data, player)
+	syncPlayer(player)
+end)
+
+-- ============================================================
+-- SAVE / LOAD
+-- ============================================================
+
+local function saveData(player)
+	local data = playerData[player.UserId]
+	if not data then return end
+
+	local function round3(n)
+		n = asNumber(n) or 0
+		return math.round(n * 1000) / 1000
+	end
+
+	data.sessionKey = math.max(0, math.floor(asNumber(data.sessionKey) or unixMillis()))
+	data.saveSeq = math.max(0, math.floor(asNumber(data.saveSeq) or 0)) + 1
+
+	local saveTable = {
+		clicks       = round3(data.clicks),
+		totalClicks  = round3(data.totalClicks),
+		prestige     = data.prestige,
+		upgrades     = data.upgrades,
+		inventory    = data.inventory,
+		equippedSkin = data.equippedSkin,
+		starPoints     = data.starPoints or 0,
+		spUpgrades     = data.spUpgrades or {},
+		pityLeg        = data.pityLeg or {0,0,0},
+		pityMythic     = data.pityMythic or {0,0,0},
+		achievements        = data.achievements or {},
+		claimedAchievements = data.claimedAchievements or {},
+		dailyStreak       = data.dailyStreak or 0,
+		lastLoginDate     = data.lastLoginDate or "",
+		dailyRewardDay    = data.dailyRewardDay or 1,
+		dailyNextClaimTime = data.dailyNextClaimTime or 0,
+		dailySessionSeconds = data.dailySessionSeconds or 0,
+		totalSPEarned  = data.totalSPEarned or 0,
+		lifetimeClicks = math.floor(data.lifetimeClicks or 0),
+		petCounts      = data.petCounts or {},   -- NEW: save golden pet copy counts
+		__sessionKey = data.sessionKey,
+		__saveSeq = data.saveSeq,
+		__savedAt = os.time(),
+	}
+
+	local success, err = pcall(function()
+		GameStore:UpdateAsync("player_" .. player.UserId, function(old)
+			if type(old) == "table" then
+				local oldSession = math.max(0, math.floor(asNumber(old.__sessionKey) or 0))
+				local oldSeq = math.max(0, math.floor(asNumber(old.__saveSeq) or 0))
+				if oldSession > data.sessionKey then return old end
+				if oldSession == data.sessionKey and oldSeq > data.saveSeq then return old end
+			end
+			return saveTable
+		end)
+	end)
+
+	if not success then
+		warn("Failed to save data for " .. player.Name .. ": " .. tostring(err))
+	else
+		print("Saved data for " .. player.Name)
+	end
+end
+
+local function loadData(player)
+	local saved = nil
+
+	local success, result = pcall(function()
+		saved = GameStore:GetAsync("player_" .. player.UserId)
+	end)
+
+	local data = createPlayerData(player)
+
+	if success and saved then
+		data.clicks       = math.max(0, asNumber(saved.clicks) or 0)
+		data.totalClicks  = math.max(0, asNumber(saved.totalClicks) or 0)
+		data.prestige     = math.max(0, math.floor(asNumber(saved.prestige) or 0))
+
+		-- Validate equippedSkin — allow both regular and golden pets
+		local savedSkin = saved.equippedSkin or "dog"
+		if savedSkin ~= "dog" then
+			local valid = getPetDef(savedSkin) ~= nil
+			if not valid and isGoldenPet(savedSkin) then
+				local baseId = getGoldenBasePetId(savedSkin)
+				valid = baseId ~= nil and getPetDef(baseId) ~= nil
+			end
+			if not valid then savedSkin = "dog" end
+		end
+		data.equippedSkin = savedSkin
+
+		if type(saved.upgrades) == "table" then
+			for _, def in ipairs(UPGRADES) do
+				local lv = asNumber(saved.upgrades[def.id])
+				if lv then
+					data.upgrades[def.id] = math.clamp(math.floor(lv), 0, def.maxLevel)
+				end
+			end
+		end
+
+		data.starPoints     = math.max(0, math.floor(asNumber(saved.starPoints) or 0))
+		data.totalSPEarned  = math.max(0, math.floor(asNumber(saved.totalSPEarned) or 0))
+		data.lifetimeClicks = math.max(0, math.floor(asNumber(saved.lifetimeClicks) or 0))
+		data.dailyStreak       = math.max(0, math.floor(asNumber(saved.dailyStreak) or 0))
+		data.lastLoginDate     = (type(saved.lastLoginDate) == "string" and saved.lastLoginDate) or ""
+		data.dailyRewardDay     = math.max(1, math.min(7, math.floor(asNumber(saved.dailyRewardDay) or 1)))
+		data.dailyNextClaimTime = math.max(0, asNumber(saved.dailyNextClaimTime) or 0)
+		data.dailySessionSeconds = math.max(0, math.min(DAILY_SESSION_REQ, math.floor(asNumber(saved.dailySessionSeconds) or 0)))
+		if type(saved.pityLeg) == "table" then
+			data.pityLeg = {}
+			for i = 1, 3 do data.pityLeg[i] = math.max(0, math.floor(asNumber(saved.pityLeg[i]) or 0)) end
+		end
+		if type(saved.pityMythic) == "table" then
+			data.pityMythic = {}
+			for i = 1, 3 do data.pityMythic[i] = math.max(0, math.floor(asNumber(saved.pityMythic[i]) or 0)) end
+		end
+
+		if type(saved.spUpgrades) == "table" then
+			for _, def in ipairs(SP_UPGRADES) do
+				local lv = asNumber(saved.spUpgrades[def.id])
+				if lv then
+					data.spUpgrades[def.id] = math.clamp(math.floor(lv), 0, def.maxLevel)
+				end
+			end
+		end
+		if type(saved.achievements) == "table" then
+			for _, def in ipairs(ACHIEVEMENTS) do
+				if saved.achievements[def.id] == true then
+					data.achievements[def.id] = true
+				end
+			end
+		end
+		if type(saved.claimedAchievements) == "table" then
+			for _, def in ipairs(ACHIEVEMENTS) do
+				if saved.claimedAchievements[def.id] == true and data.achievements[def.id] == true then
+					data.claimedAchievements[def.id] = true
+				end
+			end
+		end
+
+		-- Inventory cleaning: allow regular pets AND golden pets
+		if type(saved.inventory) == "table" then
+			local cleanedInventory = { "dog" }
+			local seen = { dog = true }
+			for _, id in ipairs(saved.inventory) do
+				if type(id) == "string" and not seen[id] then
+					local valid = false
+					if id == "dog" then
+						valid = true
+					elseif isGoldenPet(id) then
+						-- Validate: base pet must exist
+						local baseId = getGoldenBasePetId(id)
+						valid = baseId ~= nil and (getPetDef(baseId) ~= nil or baseId == "dog")
+					else
+						valid = getPetDef(id) ~= nil
+					end
+					if valid then
+						table.insert(cleanedInventory, id)
+						seen[id] = true
+					end
+				end
+			end
+			data.inventory = cleanedInventory
+		end
+
+		-- Load petCounts with migration support for old saves
+		if type(saved.petCounts) == "table" then
+			data.petCounts = {}
+			for petId, count in pairs(saved.petCounts) do
+				if type(petId) == "string" and type(count) == "number" then
+					local n = math.max(0, math.floor(count))
+					if n > 0 then data.petCounts[petId] = n end
+				end
+			end
+		else
+			-- Migration: old save has no petCounts — init count=1 per unique pet
+			data.petCounts = {}
+			for _, petId in ipairs(data.inventory) do
+				data.petCounts[petId] = (data.petCounts[petId] or 0) + 1
+			end
+		end
+		-- Always ensure dog has at least 1
+		if not data.petCounts["dog"] or data.petCounts["dog"] < 1 then
+			data.petCounts["dog"] = 1
+		end
+
+		-- Equipped skin fallback if inventory is inconsistent
+		if data.equippedSkin ~= "dog" and not hasInInventory(data, data.equippedSkin) then
+			data.equippedSkin = "dog"
+		end
+
+		print("Loaded data for " .. player.Name)
+	else
+		if not success then
+			warn("Failed to load data for " .. player.Name .. ": " .. tostring(result))
+		else
+			print("No saved data for " .. player.Name .. " - starting fresh")
+		end
+	end
+
+	playerData[player.UserId] = data
+	return data
+end
+
+-- ============================================================
+-- PLAYER JOIN / LEAVE
+-- ============================================================
+
+local sessionThreads = {}
+
+Players.PlayerAdded:Connect(function(player)
+	local data = loadData(player)
+	normalizeDailyProgress(data, os.time())
+	recalculateStats(data)
+	checkAchievements(data, player)
+	task.wait(0.5)
+	syncPlayer(player)
+	if isAdmin(player) then
+		task.delay(0.3, function()
+			RE_adminCheck:FireClient(player)
+		end)
+	end
+
+	local uid = player.UserId
+	sessionThreads[uid] = task.spawn(function()
+		while playerData[uid] do
+			task.wait(1)
+			local d = playerData[uid]
+			if not d then break end
+			local now = os.time()
+			if now >= (d.dailyNextClaimTime or 0) then
+				d.dailySessionSeconds = math.min((d.dailySessionSeconds or 0) + 1, DAILY_SESSION_REQ)
+			end
+		end
+	end)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	local uid = player.UserId
+	if sessionThreads[uid] then
+		task.cancel(sessionThreads[uid])
+		sessionThreads[uid] = nil
+	end
+	saveData(player)
+	playerData[uid] = nil
+	clickCounts[uid] = nil
+	clickRateState[uid] = nil
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(60)
+		local players = Players:GetPlayers()
+		for i, player in ipairs(players) do
+			saveData(player)
+			if i < #players then task.wait(1) end
+		end
+	end
+end)
+
+game:BindToClose(function()
+	local playerList = Players:GetPlayers()
+	if #playerList == 0 then return end
+
+	local pending = #playerList
+
+	for _, player in ipairs(playerList) do
+		task.spawn(function()
+			saveData(player)
+			pending -= 1
+		end)
+	end
+
+	local deadline = tick() + 25
+	while pending > 0 and tick() < deadline do
+		task.wait(0.5)
+	end
+
+	if pending > 0 then
+		warn(string.format("BindToClose: %d save(s) did not complete before shutdown!", pending))
+	end
+end)
+
+-- ============================================================
+-- ADMIN COMMAND HANDLER
+-- ============================================================
+
+local function fmtAdmin(n)
+	n = math.floor(asNumber(n) or 0)
+	if     n >= 1e12 then return string.format("%.2fT", n/1e12)
+	elseif n >= 1e9  then return string.format("%.2fB", n/1e9)
+	elseif n >= 1e6  then return string.format("%.2fM", n/1e6)
+	elseif n >= 1e3  then return string.format("%.1fK", n/1e3)
+	else return tostring(n) end
+end
+
+RE_adminCmd.OnServerEvent:Connect(function(player, cmd, targetName, arg1)
+	if not isAdmin(player) then
+		warn("[ADMIN] Non-admin '"..player.Name.."' sent admin cmd: "..tostring(cmd))
+		return
+	end
+
+	local target = nil
+	local tname  = tostring(targetName or ""):lower()
+	if tname == "_self" or tname == player.Name:lower() then
+		target = player
+	else
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p.Name:lower() == tname then target = p; break end
+		end
+	end
+
+	if not target then
+		RE_adminResp:FireClient(player, false, "Player not found: "..tostring(targetName))
+		return
+	end
+
+	local data = playerData[target.UserId]
+	if not data then
+		RE_adminResp:FireClient(player, false, "No data for: "..target.Name)
+		return
+	end
+
+	local amount = math.floor(asNumber(arg1) or 0)
+
+	if cmd == "give_clicks" then
+		local n = math.max(0, math.min(amount, 1e15))
+		data.clicks      += n
+		data.totalClicks += n
+		recalculateStats(data)
+		checkAchievements(data, target)
+		syncPlayer(target)
+		RE_adminResp:FireClient(player, true, "Gave "..fmtAdmin(n).." clicks → "..target.Name)
+
+	elseif cmd == "give_sp" then
+		local n = math.max(0, math.min(amount, 999999))
+		data.starPoints    = (data.starPoints    or 0) + n
+		data.totalSPEarned = (data.totalSPEarned or 0) + n
+		recalculateStats(data)
+		checkAchievements(data, target)
+		syncPlayer(target)
+		RE_adminResp:FireClient(player, true, "Gave "..n.." SP → "..target.Name)
+
+	elseif cmd == "set_prestige" then
+		local n = math.max(0, math.min(amount, MAX_PRESTIGE))
+		data.prestige = n
+		recalculateStats(data)
+		syncPlayer(target)
+		RE_adminResp:FireClient(player, true, "Prestige → "..n.." for "..target.Name)
+
+	elseif cmd == "reset_all" then
+		local uid = target.UserId
+		playerData[uid] = createPlayerData(target)
+		recalculateStats(playerData[uid])
+		syncPlayer(target)
+		RE_adminResp:FireClient(player, true, "FULL RESET → "..target.Name)
+
+	else
+		RE_adminResp:FireClient(player, false, "Unknown command: "..tostring(cmd))
+	end
+end)
+
+-- ============================================================
+-- AUTO-CPS TICK  (every 1 second)
+-- ============================================================
+
+while true do
+	task.wait(1)
+	for userId, data in pairs(playerData) do
+		if data.clicksPerSecond > 0 then
+			local earned = math.max(0, data.clicksPerSecond)
+			data.clicks      += earned
+			data.totalClicks += earned
+			local pl = Players:GetPlayerByUserId(userId)
+			if pl then
+				checkAchievements(data, pl)
+				local now = os.time()
+				local is24h = now < (data.dailyNextClaimTime or 0)
+				RE_syncData:FireClient(pl, {
+					clicks           = data.clicks,
+					totalClicks      = data.totalClicks,
+					clicksPerClick   = data.clicksPerClick,
+					clicksPerSecond  = data.clicksPerSecond,
+					starPoints       = data.starPoints,
+					prestige         = data.prestige,
+					dailyIs24hPhase  = is24h,
+					dailySecondsRemaining = is24h
+						and math.max(0, math.floor((data.dailyNextClaimTime or 0) - now))
+						or  math.max(0, DAILY_SESSION_REQ - (data.dailySessionSeconds or 0)),
+					newAchievements  = data.newAchievements or {},
+				})
+				data.newAchievements = {}
+			end
+		end
+	end
+end
