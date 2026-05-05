@@ -1,0 +1,3197 @@
+-- ============================================================
+-- LocalScript.lua  |  StarterPlayer > StarterPlayerScripts
+-- Premium UI Redesign v4 (Updated)
+-- ============================================================
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
+local RunService        = game:GetService("RunService")
+
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- ============================================================
+-- SAFE REMOTE LOADER
+-- ============================================================
+
+local RE_onClick, RE_buyUpgrade, RE_doPrestige, RE_syncData
+local RE_rollEgg, RE_buySPUpgrade, RE_equipSkin, RE_claimDaily, RE_claimAchieve, RE_craftGolden
+local RE_deletePet, RE_adminCheck, RE_adminCmd, RE_adminResp
+
+do
+	local function safeWait(parent, name, timeout)
+		local ok, result = pcall(function()
+			return parent:WaitForChild(name, timeout)
+		end)
+		return (ok and result) or nil
+	end
+
+	local remotesFolder = safeWait(ReplicatedStorage, "ClickerRemotes", 20)
+	if not remotesFolder then
+		local errGui = Instance.new("ScreenGui")
+		errGui.Name = "ClickerError"; errGui.ResetOnSpawn = false; errGui.Parent = playerGui
+		local errFrame = Instance.new("Frame", errGui)
+		errFrame.Size = UDim2.new(1,0,1,0); errFrame.BackgroundColor3 = Color3.fromRGB(6,6,18)
+		local errLbl = Instance.new("TextLabel", errFrame)
+		errLbl.Size = UDim2.new(0.9,0,0.3,0); errLbl.Position = UDim2.new(0.05,0,0.35,0)
+		errLbl.BackgroundTransparency = 1; errLbl.TextColor3 = Color3.fromRGB(255,80,80)
+		errLbl.TextSize = 22; errLbl.Font = Enum.Font.GothamBold; errLbl.TextWrapped = true
+		errLbl.Text = ("⚠ ERROR: ClickerRemotes not found in ReplicatedStorage!");
+		warn("ClickerGame LocalScript: ClickerRemotes not found after 20s – check ServerScript in Output!")
+		return
+	end
+
+	local REMOTE_NAMES = {"OnClick","BuyUpgrade","DoPrestige","SyncData","RollEgg","BuySPUpgrade","EquipSkin","ClaimDaily","ClaimAchievement","CraftGolden","DeletePet"}
+	local _remotes = {}
+	local _missingAny = false
+	for _, name in ipairs(REMOTE_NAMES) do
+		local re = safeWait(remotesFolder, name, 10)
+		if not re then
+			warn("ClickerGame: Missing remote: " .. name)
+			_missingAny = true
+		end
+		_remotes[name] = re
+	end
+	if _missingAny then
+		warn("ClickerGame: One or more remotes missing – check Output for which ones. ServerScript may have errored.")
+		return
+	end
+
+	RE_onClick      = _remotes["OnClick"]
+	RE_buyUpgrade   = _remotes["BuyUpgrade"]
+	RE_doPrestige   = _remotes["DoPrestige"]
+	RE_syncData     = _remotes["SyncData"]
+	RE_rollEgg      = _remotes["RollEgg"]
+	RE_buySPUpgrade = _remotes["BuySPUpgrade"]
+	RE_equipSkin    = _remotes["EquipSkin"]
+	RE_claimDaily    = _remotes["ClaimDaily"]
+	RE_claimAchieve  = _remotes["ClaimAchievement"]
+	RE_craftGolden   = _remotes["CraftGolden"]
+	RE_deletePet     = _remotes["DeletePet"]
+
+end
+print("ClickerGame LocalScript: All remotes loaded OK")
+
+do
+	local cf = ReplicatedStorage:FindFirstChild("ClickerRemotes")
+	if cf then
+		RE_adminCheck = cf:WaitForChild("AdminCheck", 10)
+		RE_adminCmd   = cf:WaitForChild("AdminCmd",   10)
+		RE_adminResp  = cf:WaitForChild("AdminResp",  10)
+	end
+end
+
+-- ============================================================
+-- COLOUR PALETTE
+-- ============================================================
+
+local C = {
+	bg0       = Color3.fromRGB(6,   6,  18),
+	bg1       = Color3.fromRGB(12,  11, 32),
+	bg2       = Color3.fromRGB(20,  18, 50),
+	bg3       = Color3.fromRGB(30,  28, 70),
+	gold      = Color3.fromRGB(255, 210,  0),
+	goldDim   = Color3.fromRGB(180, 140,  0),
+	cyan      = Color3.fromRGB(0,   220, 255),
+	cyanDim   = Color3.fromRGB(0,   140, 180),
+	purple    = Color3.fromRGB(160,  60, 255),
+	purpleDim = Color3.fromRGB(100,  35, 180),
+	green     = Color3.fromRGB(60,  220, 120),
+	red       = Color3.fromRGB(255,  70,  70),
+	white     = Color3.fromRGB(240, 240, 255),
+	grey      = Color3.fromRGB(130, 125, 170),
+	greyDark  = Color3.fromRGB(50,  46,  80),
+}
+
+local RARITY_COLOR = {
+	Default   = Color3.fromRGB(160,160,160),
+	Common    = Color3.fromRGB(200,200,200),
+	Uncommon  = Color3.fromRGB(80, 220, 100),
+	Rare      = Color3.fromRGB(60, 140, 255),
+	Epic      = Color3.fromRGB(180, 60, 255),
+	Legendary = Color3.fromRGB(255,200,  0),
+	Mythic    = Color3.fromRGB(255, 40,  40),
+}
+
+local RARITY_VAL = {
+	Default   = 1,
+	Common    = 2,
+	Uncommon  = 3,
+	Rare      = 4,
+	Epic      = 5,
+	Legendary = 6,
+	Mythic    = 7,
+}
+
+local PET_THEME = {
+	screenBg       = Color3.fromRGB(6, 6, 14),
+	headerBg       = Color3.fromRGB(10, 9, 18),
+	headerLine     = Color3.fromRGB(196, 82, 255),
+	headerText     = Color3.fromRGB(255, 164, 236),
+	panelBg        = Color3.fromRGB(12, 10, 20),
+	panelSoft      = Color3.fromRGB(16, 13, 28),
+	panelStroke    = Color3.fromRGB(160, 70, 255),
+	equipLabel     = Color3.fromRGB(255, 130, 224),
+	btnIdle        = Color3.fromRGB(22, 18, 35),
+	btnIdleText    = Color3.fromRGB(222, 217, 245),
+	btnEquip       = Color3.fromRGB(255, 170, 15),
+	btnEquipHover  = Color3.fromRGB(255, 196, 58),
+	btnUnequip     = Color3.fromRGB(255, 76, 88),
+	btnUnequipHover= Color3.fromRGB(255, 102, 112),
+}
+
+local PET_RARITY_NEON = {
+	Default   = Color3.fromRGB(162, 162, 172),
+	Common    = Color3.fromRGB(255, 88, 88),
+	Uncommon  = Color3.fromRGB(255, 146, 52),
+	Rare      = Color3.fromRGB(90, 208, 255),
+	Epic      = Color3.fromRGB(238, 106, 255),
+	Legendary = Color3.fromRGB(255, 190, 35),
+	Mythic    = Color3.fromRGB(255, 94, 206),
+}
+
+local PET_RARITY_BG = {
+	Default   = Color3.fromRGB(19, 17, 28),
+	Common    = Color3.fromRGB(28, 12, 18),
+	Uncommon  = Color3.fromRGB(30, 18, 10),
+	Rare      = Color3.fromRGB(12, 22, 34),
+	Epic      = Color3.fromRGB(28, 12, 36),
+	Legendary = Color3.fromRGB(30, 24, 8),
+	Mythic    = Color3.fromRGB(34, 10, 24),
+}
+
+-- ============================================================
+-- ICON ASSET MAP
+-- ============================================================
+
+local makeIconLabel
+local setIcon
+
+do
+	local ICONS = {
+		nav_click = "rbxassetid://17293879614",
+		nav_prestige = "rbxassetid://99330025492372",
+		nav_eggs = "rbxassetid://17079629909",
+		nav_pets = "rbxassetid://16380908271",
+		nav_achievements = "rbxassetid://13556389355",
+
+		upgrade_better_finger = "",
+		upgrade_auto_clicker = "",
+		upgrade_double_click = "",
+		upgrade_click_farm = "",
+		upgrade_multiplier_boost = "",
+		upgrade_mega_clicker = "",
+		upgrade_robot_army = "",
+
+		sp_sp_click1 = "",
+		sp_sp_auto1 = "",
+		sp_sp_egg1 = "",
+		sp_sp_dup1 = "",
+		sp_sp_mult1 = "",
+		sp_sp_golden = "",
+		sp_sp_crit = "",
+
+		egg_1 = "rbxassetid://105173591141294",
+		egg_2 = "rbxassetid://80019559599802",
+		egg_3 = "rbxassetid://8538737945",
+
+		pet_dog = "",
+		pet_cat = "",
+		pet_rabbit = "",
+		pet_fox = "",
+		pet_wolf = "",
+		pet_bear = "",
+		pet_goldcat = "",
+		pet_panda = "",
+		pet_tiger = "",
+		pet_lion = "",
+		pet_dragon = "",
+		pet_phoenix = "",
+		pet_crystal = "",
+		pet_robot = "",
+		pet_alien = "",
+		pet_darkwolf = "",
+		pet_thunder = "",
+		pet_godcat = "",
+		pet_cosmos = "",
+		pet_hellfire = "",
+		pet_abyssal = "",
+		pet_omega = "",
+
+		ach_lclicks_1k = "",
+		ach_lclicks_10k = "",
+		ach_lclicks_100k = "",
+		ach_lclicks_1M = "",
+		ach_lclicks_10M = "",
+		ach_owned_100k = "",
+		ach_owned_10M = "",
+		ach_owned_1B = "",
+		ach_owned_100B = "",
+		ach_owned_1T = "",
+		ach_prestige_1 = "",
+		ach_prestige_5 = "",
+		ach_prestige_10 = "",
+		ach_pet_first = "",
+		ach_pet_5 = "",
+		ach_pet_10 = "",
+		ach_legendary_pet = "",
+		ach_mythic_pet = "",
+		ach_upgrade_max1 = "",
+		ach_sp_10 = "",
+		ach_sp_50 = "",
+		ach_streak_3 = "",
+		ach_streak_7 = "",
+
+		daily_1 = "",
+		daily_2 = "",
+		daily_3 = "",
+		daily_4 = "",
+		daily_5 = "",
+		daily_6 = "",
+		daily_7 = "",
+	}
+
+	local function normalizeIconId(raw)
+		if type(raw) ~= "string" then return nil end
+		local trimmed = string.gsub(raw, "^%s*(.-)%s*$", "%1")
+		if trimmed == "" then return nil end
+		if string.match(trimmed, "^rbxassetid://%d+$") then return trimmed end
+		if string.match(trimmed, "^%d+$") then return "rbxassetid://" .. trimmed end
+		local idFromHttp = string.match(trimmed, "^https?://www%.roblox%.com/asset/%?id=(%d+)$")
+		if idFromHttp then return "rbxassetid://" .. idFromHttp end
+		return nil
+	end
+
+	local function tryLoadIconsFromFolder()
+		local folder = ReplicatedStorage:FindFirstChild("UiIcons")
+		if not folder then return end
+
+		for _, obj in ipairs(folder:GetChildren()) do
+			local raw = nil
+			if obj:IsA("Decal") then raw = obj.Texture
+			elseif obj:IsA("ImageLabel") or obj:IsA("ImageButton") then raw = obj.Image
+			elseif obj:IsA("StringValue") then raw = obj.Value
+			elseif obj:IsA("Texture") then raw = obj.Texture end
+
+			local normalized = normalizeIconId(raw)
+			if normalized then ICONS[obj.Name] = normalized end
+		end
+	end
+
+	local function resolveIcon(iconKey, fallbackText)
+		local raw = iconKey and ICONS[iconKey] or nil
+		local normalized = normalizeIconId(raw)
+		if normalized then return normalized, nil end
+		return nil, fallbackText or ""
+	end
+
+	makeIconLabel = function(parent, props)
+		local icon = Instance.new("ImageLabel")
+		icon.BackgroundTransparency = 1
+		icon.BorderSizePixel = 0
+		icon.ScaleType = Enum.ScaleType.Fit
+		for k, v in pairs(props) do icon[k] = v end
+		icon.Parent = parent
+		return icon
+	end
+
+	setIcon = function(targetImageLabel, iconKey, fallbackTextLabel, fallbackText, tintColor)
+		if not targetImageLabel then return end
+		local imageId, fallback = resolveIcon(iconKey, fallbackText)
+		if imageId then
+			targetImageLabel.Image = imageId
+			targetImageLabel.ImageColor3 = tintColor or Color3.fromRGB(255, 255, 255)
+			targetImageLabel.Visible = true
+			if fallbackTextLabel then fallbackTextLabel.Visible = false end
+		else
+			targetImageLabel.Image = ""
+			targetImageLabel.Visible = false
+			if fallbackTextLabel then
+				fallbackTextLabel.Text = fallback
+				fallbackTextLabel.Visible = true
+			end
+		end
+	end
+
+	local function preloadIcons()
+		local ids = {}
+		local seen = {}
+		for _, raw in pairs(ICONS) do
+			local normalized = normalizeIconId(raw)
+			if normalized and not seen[normalized] then
+				seen[normalized] = true
+				table.insert(ids, normalized)
+			end
+		end
+		if #ids == 0 then return end
+		pcall(function() game:GetService("ContentProvider"):PreloadAsync(ids) end)
+	end
+
+	tryLoadIconsFromFolder()
+	task.spawn(function()
+		preloadIcons()
+		if _G._onIconsLoaded then _G._onIconsLoaded() end
+	end)
+end
+
+-- ============================================================
+-- PET / EGG DATA
+-- ============================================================
+
+local PET_DATA = {
+	dog      = { name="Dog",        emoji="🐕", rarity="Default",   multiplier=1.0  },
+	cat      = { name="Cat",        emoji="🐈", rarity="Common",    multiplier=1.1  },
+	rabbit   = { name="Rabbit",     emoji="🐇", rarity="Common",    multiplier=1.2  },
+	fox      = { name="Fox",        emoji="🦊", rarity="Uncommon",  multiplier=1.5  },
+	wolf     = { name="Wolf",       emoji="🐺", rarity="Rare",      multiplier=2.0  },
+	bear     = { name="Bear",       emoji="🐻", rarity="Epic",      multiplier=2.5  },
+	goldcat  = { name="Gold Cat",   emoji="😺", rarity="Legendary", multiplier=3.5  },
+	panda    = { name="Panda",      emoji="🐼", rarity="Common",    multiplier=2.0  },
+	tiger    = { name="Tiger",      emoji="🐅", rarity="Common",    multiplier=2.5  },
+	lion     = { name="Lion",       emoji="🦁", rarity="Uncommon",  multiplier=3.0  },
+	dragon   = { name="Dragon",     emoji="🐉", rarity="Rare",      multiplier=4.5  },
+	phoenix  = { name="Phoenix",    emoji="🦜", rarity="Epic",      multiplier=6.0  },
+	crystal  = { name="Crystal",    emoji="💎", rarity="Legendary", multiplier=9.0  },
+	robot    = { name="Robot",      emoji="🤖", rarity="Common",    multiplier=4.0  },
+	alien    = { name="Alien",      emoji="👽", rarity="Uncommon",  multiplier=5.5  },
+	darkwolf = { name="Dark Wolf",  emoji="🌚", rarity="Uncommon",  multiplier=7.0  },
+	thunder  = { name="Thunder",    emoji="⚡", rarity="Rare",      multiplier=9.0  },
+	godcat   = { name="God Cat",    emoji="👑", rarity="Epic",      multiplier=13.0 },
+	cosmos   = { name="Cosmos",     emoji="🌌", rarity="Legendary", multiplier=20.0 },
+	hellfire = { name="Hellfire",   emoji="🔥", rarity="Mythic",    multiplier=6.0  },
+	abyssal  = { name="Abyssal",    emoji="🌊", rarity="Mythic",    multiplier=14.0 },
+	omega    = { name="Omega",      emoji="⚡", rarity="Mythic",    multiplier=35.0 },
+}
+
+local function getPetInfo(petId)
+	if type(petId) ~= "string" then return nil end
+	local isGolden = string.sub(petId, 1, 7) == "golden_"
+	local baseId = isGolden and string.sub(petId, 8) or petId
+	local pd = PET_DATA[baseId]; if not pd then return nil end
+	return {
+		id = petId,
+		baseId = baseId,
+		isGolden = isGolden,
+		name = isGolden and ("Golden " .. pd.name) or pd.name,
+		emoji = pd.emoji,
+		rarity = pd.rarity,
+		multiplier = isGolden and (pd.multiplier * 2) or pd.multiplier
+	}
+end
+
+local EGG_INFO = {
+	[1] = { name="Common Egg",    emoji="🥚", cost=50000,        color=Color3.fromRGB(160,200,255), glow=Color3.fromRGB(80,150,255)  },
+	[2] = { name="Mystic Egg",    emoji="🔮", cost=10000000,     color=Color3.fromRGB(200,100,255), glow=Color3.fromRGB(150,50,255)  },
+	[3] = { name="Legendary Egg", emoji="👑", cost=20000000000,  color=Color3.fromRGB(255,210,0),   glow=Color3.fromRGB(255,140,0)   },
+}
+
+local EGG_PETS = {
+	[1] = {
+		{id="cat", chance=180}, {id="rabbit", chance=108}, {id="fox", chance=60},
+		{id="wolf", chance=32}, {id="bear", chance=12}, {id="goldcat", chance=4}, {id="hellfire", chance=1},
+	},
+	[2] = {
+		{id="panda", chance=76}, {id="tiger", chance=48}, {id="lion", chance=36},
+		{id="dragon", chance=24}, {id="phoenix", chance=10}, {id="crystal", chance=4}, {id="abyssal", chance=1},
+	},
+	[3] = {
+		{id="robot", chance=62}, {id="alien", chance=50}, {id="darkwolf", chance=40},
+		{id="thunder", chance=28}, {id="godcat", chance=14}, {id="cosmos", chance=4}, {id="omega", chance=1},
+	},
+}
+
+local PET_TO_EGG = {}
+for eggNum, list in pairs(EGG_PETS) do
+	for _, entry in ipairs(list) do
+		PET_TO_EGG[entry.id] = eggNum
+	end
+end
+
+local SP_UPGRADE_DISPLAY = {
+	{ id="sp_click1",  name="Click Mastery",  icon="🗡️", desc="+20% CPC/lv",          costs={1,2,4,7,12},  maxLevel=5 },
+	{ id="sp_auto1",   name="Auto Engine",    icon="⚙️", desc="+25% CPS/lv",          costs={2,4,7,12,20}, maxLevel=5 },
+	{ id="sp_egg1",    name="Egg Discount",   icon="🔮", desc="-15% egg cost/lv",     costs={5,12,22},     maxLevel=3 },
+	{ id="sp_dup1",    name="Recycler",       icon="♾️", desc="+12% dup refund/lv",   costs={6,14},        maxLevel=2 },
+	{ id="sp_mult1",   name="SP Magnet",      icon="🌀", desc="+20% SP earned/lv",    costs={8,20,36},     maxLevel=3 },
+	{ id="sp_golden",  name="Golden Age",     icon="🏆", desc="+50% all mult/lv",     costs={18,40},       maxLevel=2 },
+	{ id="sp_crit",    name="Critical Click", icon="⚡", desc="+10% crit (5× dmg)",   costs={25},          maxLevel=1 },
+}
+
+local ACHIEVEMENT_DISPLAY = {
+	{ id="lclicks_1k",    name="First Steps",       icon="👆", desc="Perform 1,000 clicks",            reward="+3% CPC",    req_lifetime=1000          },
+	{ id="lclicks_10k",   name="Click Addict",      icon="⚡", desc="Perform 10,000 clicks",           reward="+5% CPC",    req_lifetime=10000         },
+	{ id="lclicks_100k",  name="Click Machine",     icon="💥", desc="Perform 100,000 clicks",          reward="+8% CPC",    req_lifetime=100000        },
+	{ id="lclicks_1M",    name="Million Club",      icon="👑", desc="Perform 1,000,000 clicks",        reward="+12% CPS",   req_lifetime=1000000       },
+	{ id="lclicks_10M",   name="Click Legend",      icon="🌌", desc="Perform 10,000,000 clicks",       reward="+18% All",   req_lifetime=10000000      },
+	{ id="owned_100k",    name="Wealthy",           icon="💰", desc="Own 100K clicks at once",         reward="+5% CPC",    req_owned=100000           },
+	{ id="owned_10M",     name="Millionaire",       icon="💎", desc="Own 10M clicks at once",          reward="+8% CPS",    req_owned=10000000         },
+	{ id="owned_1B",      name="Billionaire",       icon="🏦", desc="Own 1B clicks at once",           reward="+12% All",   req_owned=1000000000       },
+	{ id="owned_100B",    name="Trillionaire",      icon="🌟", desc="Own 100B clicks at once",         reward="+20% CPC",   req_owned=100000000000     },
+	{ id="owned_1T",      name="God of Wealth",     icon="🔱", desc="Own 1T clicks at once",           reward="+30% All",   req_owned=1000000000000    },
+	{ id="prestige_1",    name="New Beginning",     icon="💫", desc="Perform your first prestige",     reward="+5% SP Gain",req_prestige=1             },
+	{ id="prestige_5",    name="Veteran",           icon="🌟", desc="Prestige 5 times",                reward="+10% CPS",   req_prestige=5             },
+	{ id="prestige_10",   name="Legend",            icon="🏆", desc="Prestige 10 times",               reward="+20% All",   req_prestige=10            },
+	{ id="pet_first",     name="Pet Owner",         icon="🐾", desc="Get your first pet",              reward="+5% CPC",    req_pets=1                 },
+	{ id="pet_5",         name="Menagerie",         icon="🦁", desc="Collect 5 different pets",        reward="+8% CPS",    req_pets=5                 },
+	{ id="pet_10",        name="Zoo Keeper",        icon="🌈", desc="Collect 10 different pets",       reward="+12% CPC",   req_pets=10                },
+	{ id="legendary_pet", name="Legendary Tamer",   icon="🌌", desc="Obtain a Legendary or better pet",reward="+12% CPS",   req_legendary=true         },
+	{ id="mythic_pet",    name="Mythic Chosen",     icon="🔥", desc="Obtain a Mythic pet (0.5%)",      reward="+25% All",   req_mythic=true            },
+	{ id="upgrade_max1",  name="Optimizer",         icon="🔧", desc="Max out any upgrade",             reward="+10% CPS",   req_any_max=true           },
+	{ id="sp_10",         name="Star Collector",    icon="⭐", desc="Earn a total of 10 SP",           reward="+5% SP Gain",req_sp=10                  },
+	{ id="sp_50",         name="Star Hoarder",      icon="💠", desc="Earn a total of 50 SP",           reward="+15% All",   req_sp=50                  },
+	{ id="streak_3",      name="Regular",           icon="📅", desc="Log in 3 days in a row",          reward="+5% CPC",    req_streak=3               },
+	{ id="streak_7",      name="Dedicated",         icon="🔥", desc="Log in 7 days in a row",          reward="+12% CPC",   req_streak=7               },
+}
+
+local UPGRADE_DISPLAY = {
+	{ id="better_finger",    name="Stronger Finger", icon="⚔️", desc="+1 per click",      baseCost=10,    costMult=1.5, maxLevel=50 },
+	{ id="auto_clicker",     name="Auto Clicker",    icon="🔩", desc="+1/s auto",          baseCost=50,    costMult=1.8, maxLevel=30 },
+	{ id="double_click",     name="Double Click",    icon="🎯", desc="+3 per click",       baseCost=150,   costMult=2.0, maxLevel=20 },
+	{ id="click_farm",       name="Click Farm",      icon="🏰", desc="+5/s auto",          baseCost=500,   costMult=1.9, maxLevel=20 },
+	{ id="multiplier_boost", name="Multiplier x2",   icon="💠", desc="Doubles everything", baseCost=50000, costMult=6.0, maxLevel=10 },
+	{ id="mega_clicker",     name="Mega Clicker",    icon="💥", desc="+20 per click",      baseCost=5000,  costMult=2.5, maxLevel=15 },
+	{ id="robot_army",       name="Robot Army",      icon="🦾", desc="+25/s auto",         baseCost=10000, costMult=2.2, maxLevel=15 },
+}
+
+local localData = {
+	clicks=0, totalClicks=0, prestige=0,
+	clicksPerClick=1, clicksPerSecond=0,
+	upgrades={}, inventory={"dog"}, equippedSkin="dog",
+	starPoints=0, spUpgrades={},
+	eggDiscount=0, critChance=0,
+	achievements={}, claimedAchievements={}, dailyStreak=0, lastLoginDate="", totalSPEarned=0, pityLeg={0,0,0}, pityMythic={0,0,0}, nextGoal=nil,
+	lifetimeClicks=0,
+	dailyRewardDay=1, dailySecondsRemaining=0,
+}
+for _,u in ipairs(UPGRADE_DISPLAY)    do localData.upgrades[u.id]=0   end
+for _,u in ipairs(SP_UPGRADE_DISPLAY) do localData.spUpgrades[u.id]=0 end
+
+local displayedClicks = 0
+
+-- ============================================================
+-- HELPERS
+-- ============================================================
+
+local function fmt(n)
+	n = math.floor(n)
+	if     n >= 1e12 then return ("%.2fT"):format(n/1e12)
+	elseif n >= 1e9  then return ("%.2fB"):format(n/1e9)
+	elseif n >= 1e6  then return ("%.2fM"):format(n/1e6)
+	elseif n >= 1e3  then return ("%.1fK"):format(n/1e3)
+	else return tostring(n) end
+end
+
+local function asNumber(v)
+	if type(v) == "number" then return v end
+	if type(v) == "string" then return tonumber(v) end
+	return nil
+end
+
+local function fmtPrecise(n)
+	n = asNumber(n) or 0
+	local abs = math.abs(n)
+	if abs >= 1e12 then return ("%.2fT"):format(n / 1e12)
+	elseif abs >= 1e9 then return ("%.2fB"):format(n / 1e9)
+	elseif abs >= 1e6 then return ("%.2fM"):format(n / 1e6)
+	elseif abs >= 1e3 then
+		local s = ("%.2fK"):format(n / 1e3)
+		return s:gsub("0+$", ""):gsub("%.$", "")
+	else
+		local rounded = math.round(n * 100) / 100
+		if math.abs(rounded - math.floor(rounded)) < 1e-6 then return tostring(math.floor(rounded)) end
+		local s = ("%.2f"):format(rounded)
+		return s:gsub("0+$", ""):gsub("%.$", "")
+	end
+end
+
+local function corner(p, r)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = r or UDim.new(0,12)
+	c.Parent = p; return c
+end
+
+local function uistroke(p, col, thick, trans)
+	local s = Instance.new("UIStroke")
+	s.Color = col or C.white; s.Thickness = thick or 2
+	s.Transparency = trans or 0
+	s.Parent = p; return s
+end
+
+local function lbl(parent, props)
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1; l.BorderSizePixel = 0
+	for k,v in pairs(props) do l[k]=v end
+	l.Parent = parent; return l
+end
+
+local function frm(parent, props)
+	local f = Instance.new("Frame")
+	f.BorderSizePixel = 0
+	for k,v in pairs(props) do f[k]=v end
+	f.Parent = parent; return f
+end
+
+local function tbtn(parent, props)
+	local b = Instance.new("TextButton")
+	b.BorderSizePixel = 0; b.AutoButtonColor = false
+	for k,v in pairs(props) do b[k]=v end
+	b.Parent = parent; return b
+end
+
+local function tw(obj, info, props)
+	return TweenService:Create(obj, info, props)
+end
+
+local FAST  = TweenInfo.new(0.08, Enum.EasingStyle.Quad)
+local MED   = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local BACK  = TweenInfo.new(0.3,  Enum.EasingStyle.Back,  Enum.EasingDirection.Out)
+local SLIDE = TweenInfo.new(0.55, Enum.EasingStyle.Quint, Enum.EasingDirection.InOut)
+
+local function pulse(obj, prop, v1, v2, spd)
+	local ti = TweenInfo.new(spd or 1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+	obj[prop] = v1
+	TweenService:Create(obj, ti, {[prop]=v2}):Play()
+end
+
+local function makeStars(parent, n, col, minT, maxT)
+	for _ = 1, n do
+		local s = frm(parent, {
+			Size=UDim2.new(0,math.random(1,3),0,math.random(1,3)),
+			Position=UDim2.new(math.random(),0,math.random(),0),
+			BackgroundColor3=col or C.white,
+			BackgroundTransparency=math.random(minT or 4, maxT or 8)/10,
+			ZIndex=0,
+		})
+		corner(s, UDim.new(1,0))
+		local delay = math.random()*3
+		task.delay(delay, function()
+			pulse(s, "BackgroundTransparency", math.random(4,7)/10, math.random(1,3)/10, 1+math.random()*2)
+		end)
+	end
+end
+
+local manualClickHistory = {}
+local function recordManualClick(earned)
+	table.insert(manualClickHistory, {t = tick(), v = earned})
+end
+local function getManualCPS()
+	local now = tick()
+	local sum = 0
+	local i = 1
+	while i <= #manualClickHistory do
+		if now - manualClickHistory[i].t > 1 then table.remove(manualClickHistory, i)
+		else sum += manualClickHistory[i].v; i += 1 end
+	end
+	return sum
+end
+
+local function getUpgradeCost(upg)
+	local lv = localData.upgrades[upg.id] or 0
+	return math.floor(upg.baseCost * (upg.costMult ^ lv))
+end
+
+local function getSPUpgradeCost(upg)
+	local lv = localData.spUpgrades[upg.id] or 0
+	if lv >= upg.maxLevel then return math.huge end
+	return upg.costs[lv + 1] or math.huge
+end
+
+local function hasPetInList(list, petId)
+	if type(list) ~= "table" then return false end
+	for _, id in ipairs(list) do
+		if id == petId then return true end
+	end
+	return false
+end
+
+local function spBonusPreview(sp)
+	local bonus = 1 + sp * 0.08
+	return ("×%.2f"):format(bonus)
+end
+
+local MAX_PRESTIGE = 20
+local PRESTIGE_BASE_REQ = 1000000
+local function getPrestigeRequirement(prestige)
+	return PRESTIGE_BASE_REQ * (10 ^ math.max(0, prestige or 0))
+end
+
+local function clamp01(v)
+	return math.clamp(asNumber(v) or 0, 0, 1)
+end
+
+local function getPitySnapshot()
+	local leg = type(localData.pityLeg) == "table" and localData.pityLeg or {0,0,0}
+	local myth = type(localData.pityMythic) == "table" and localData.pityMythic or {0,0,0}
+	local best = nil
+	for eggNum = 1, 3 do
+		local l = math.max(0, math.floor(asNumber(leg[eggNum]) or 0))
+		local m = math.max(0, math.floor(asNumber(myth[eggNum]) or 0))
+		local legRemaining = math.max(0, 30 - l)
+		local mythRemaining = math.max(0, 100 - m)
+		local legProgress = math.clamp(l / 30, 0, 1)
+		local mythProgress = math.clamp(m / 100, 0, 1)
+		local nearScore = math.max(legProgress, mythProgress)
+		if legRemaining > 0 and (not best or legRemaining < best.remaining or (legRemaining == best.remaining and nearScore > best.score)) then
+			best = {
+				eggNum = eggNum,
+				mode = "Legendary",
+				remaining = legRemaining,
+				threshold = 30,
+				score = nearScore,
+				progress = legProgress,
+				text = string.format("Egg %d • Legendary pity %d/30", eggNum, l),
+			}
+		end
+		if mythRemaining > 0 and (not best or mythRemaining < best.remaining or (mythRemaining == best.remaining and mythProgress > best.score)) then
+			best = {
+				eggNum = eggNum,
+				mode = "Mythic",
+				remaining = mythRemaining,
+				threshold = 100,
+				score = mythProgress,
+				progress = mythProgress,
+				text = string.format("Egg %d • Mythic pity %d/100", eggNum, m),
+			}
+		end
+	end
+	return best
+end
+
+local function getUpgradeScore(upg)
+	local score = (upg.cpc or 0) * 1.0 + (upg.cps or 0) * 1.45 + (upg.mult or 0) * 7.5
+	return math.max(score, 1)
+end
+
+local function buildNextGoalSnapshot()
+	local currentClicks = math.max(0, math.floor(asNumber(displayedClicks) or 0))
+	local totalClicks = math.max(0, math.floor(asNumber(localData.totalClicks) or 0))
+	local prestige = math.max(0, math.floor(asNumber(localData.prestige) or 0))
+	local presReq = getPrestigeRequirement(prestige)
+	local isMaxPrestige = prestige >= MAX_PRESTIGE
+	local canPrestige = (not isMaxPrestige) and totalClicks >= presReq
+	local prestigeProgress = (isMaxPrestige and 1) or math.clamp(totalClicks / presReq, 0, 1)
+	local prestigeAway = math.max(0, presReq - totalClicks)
+	local prestigeSoon = (not isMaxPrestige) and prestigeProgress >= 0.85
+
+	local bestAffordable, bestSoonest
+	for _, upg in ipairs(UPGRADE_DISPLAY) do
+		local lv = localData.upgrades[upg.id] or 0
+		if lv < upg.maxLevel then
+			local cost = getUpgradeCost(upg)
+			local progress = (cost > 0) and math.clamp(currentClicks / cost, 0, 1) or 0
+			local score = getUpgradeScore(upg)
+			local cand = {
+				type = "UPGRADE",
+				name = upg.name,
+				cost = cost,
+				progress = progress,
+				away = fmt(math.max(0, cost - currentClicks)) .. " clicks away",
+				detail = string.format("+%.1f value | Lv %d/%d", score, lv, upg.maxLevel),
+				score = score,
+				canAfford = cost <= currentClicks,
+			}
+			if not bestSoonest or cost < bestSoonest.cost or (cost == bestSoonest.cost and progress > bestSoonest.progress) then
+				bestSoonest = cand
+			end
+			if cand.canAfford and (not bestAffordable or cand.score > bestAffordable.score or (cand.score == bestAffordable.score and cand.cost < bestAffordable.cost)) then
+				bestAffordable = cand
+			end
+		end
+	end
+
+	local pity = getPitySnapshot()
+	local pityGoal = nil
+	if pity then
+		local meaningful = (pity.mode == "Legendary" and pity.remaining <= 10) or (pity.mode == "Mythic" and pity.remaining <= 20)
+		if meaningful then
+			pityGoal = {
+				type = "PITY",
+				name = string.format("Hatch Egg %d", pity.eggNum),
+				cost = 0,
+				progress = pity.progress,
+				away = string.format("%d hatch%s away", pity.remaining, pity.remaining == 1 and "" or "es"),
+				detail = pity.text,
+				score = 100 - pity.remaining,
+				canAfford = true,
+			}
+		end
+	end
+
+	local goal = nil
+	if canPrestige then
+		goal = {
+			type = "PRESTIGE",
+			name = "Prestige " .. (prestige + 1),
+			progress = 1,
+			away = "Ready to cash out now",
+			detail = string.format("Spend %s total clicks for %d SP", fmt(presReq), math.max(1, math.floor(prestige / 3) + 1)),
+			score = 999,
+		}
+	elseif prestigeSoon then
+		goal = {
+			type = "PRESTIGE",
+			name = "Prestige " .. (prestige + 1),
+			progress = prestigeProgress,
+			away = fmt(prestigeAway) .. " total clicks away",
+			detail = string.format("Cash out for +%d SP", math.max(1, math.floor(prestige / 3) + 1)),
+			score = prestigeProgress + 0.5,
+		}
+	elseif bestAffordable then
+		goal = bestAffordable
+	elseif pityGoal and (not bestSoonest or pityGoal.progress >= math.max(0.5, bestSoonest.progress - 0.15)) then
+		goal = pityGoal
+	else
+		goal = bestSoonest or {
+			type = "PRESTIGE",
+			name = "Prestige " .. (prestige + 1),
+			progress = prestigeProgress,
+			away = fmt(prestigeAway) .. " total clicks away",
+			detail = string.format("Cash out for +%d SP", math.max(1, math.floor(prestige / 3) + 1)),
+			score = prestigeProgress,
+		}
+	end
+
+	if goal and goal.type == "UPGRADE" and pityGoal and goal.progress < 1 then
+		goal.detail = goal.detail .. " | " .. pityGoal.detail
+	elseif goal and goal.type == "PRESTIGE" and pityGoal then
+		goal.detail = goal.detail .. " | " .. pityGoal.detail
+	end
+
+	return goal, { prestigeProgress = prestigeProgress, prestigeAway = prestigeAway, prestige = prestige, presReq = presReq, isMaxPrestige = isMaxPrestige, pity = pity }
+end
+
+local lastNextGoalKey  = nil
+local lastNextGoalFill = -1
+
+local GOAL_TYPE_COLORS = {
+	UPGRADE  = Color3.fromRGB(0, 220, 255),
+	PRESTIGE = Color3.fromRGB(160, 60, 255),
+	PITY     = Color3.fromRGB(255, 210, 0),
+}
+local GOAL_TYPE_LABELS = {
+	UPGRADE  = "UPGRADE",
+	PRESTIGE = "PRESTIGE",
+	PITY     = "PITY",
+}
+
+local function fmtETA(seconds)
+	if seconds <= 0 then return "⚡ gotowe!" end
+	local s = math.ceil(seconds)
+	if s < 60   then return string.format("⏱ ~%ds", s) end
+	if s < 3600 then return string.format("⏱ ~%dm %ds", math.floor(s / 60), s % 60) end
+	return string.format("⏱ ~%dh %dm", math.floor(s / 3600), math.floor((s % 3600) / 60))
+end
+
+local function renderNextGoal()
+	if not _G.nextGoalName then return end
+	local goal, meta = buildNextGoalSnapshot()
+	if not goal then return end
+
+	local fill    = math.clamp(goal.progress or 0, 0, 1)
+	local gType   = goal.type or "UPGRADE"
+	local accentC = GOAL_TYPE_COLORS[gType] or C.cyan
+
+	-- Aktualizuj tylko gdy coś się zmieniło (oszczędność)
+	local goalKey    = (gType or "") .. "|" .. (goal.name or "") .. "|" .. math.floor(fill * 100)
+	local fillChanged = math.abs(fill - lastNextGoalFill) > 0.005
+
+	if goalKey ~= lastNextGoalKey or fillChanged then
+		lastNextGoalKey  = goalKey
+		lastNextGoalFill = fill
+
+		_G.nextGoalName.Text = goal.name or "???"
+		_G.nextGoalAway.Text = goal.away or ""
+
+		if _G.nextGoalTypeBg then
+			_G.nextGoalTypeBg.BackgroundColor3 = accentC
+		end
+		if _G.nextGoalTypeLabel then
+			_G.nextGoalTypeLabel.Text = GOAL_TYPE_LABELS[gType] or gType
+			_G.nextGoalTypeLabel.TextColor3 = (gType == "PITY")
+				and Color3.fromRGB(10, 8, 0)
+				or  Color3.fromRGB(0, 0, 0)
+		end
+
+		TweenService:Create(
+			_G.nextGoalBarFill,
+			TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Size = UDim2.new(fill, 0, 1, 0), BackgroundColor3 = accentC }
+		):Play()
+
+		if _G.nextGoalPct then
+			_G.nextGoalPct.Text = math.floor(fill * 100) .. "%"
+		end
+
+		if _G.nextGoalDetail then
+			_G.nextGoalDetail.Text = goal.detail or ""
+		end
+	end
+
+	-- ETA — przeliczamy co klatkę bo rate się zmienia
+	if _G.nextGoalETA then
+		local autoCPS   = localData.clicksPerSecond or 0
+		local manualCPS = getManualCPS()
+		local totalRate = autoCPS + manualCPS
+		local etaText   = ""
+
+		if gType == "UPGRADE" and goal.cost and goal.cost > 0 then
+			local needed = math.max(0, goal.cost - displayedClicks)
+			if needed <= 0 then
+				etaText = "⚡ stać cię — kup teraz!"
+				_G.nextGoalETA.TextColor3 = C.green
+			elseif totalRate > 0 then
+				etaText = fmtETA(needed / totalRate)
+				_G.nextGoalETA.TextColor3 = Color3.fromRGB(80, 200, 255)
+			else
+				etaText = "⏱ klikaj żeby zarobić"
+				_G.nextGoalETA.TextColor3 = C.grey
+			end
+		elseif gType == "PRESTIGE" then
+			local needed = math.max(0, meta.prestigeAway)
+			if needed <= 0 then
+				etaText = "⚡ PRESTIGE dostępny!"
+				_G.nextGoalETA.TextColor3 = C.purple
+			elseif totalRate > 0 then
+				etaText = fmtETA(needed / totalRate)
+				_G.nextGoalETA.TextColor3 = Color3.fromRGB(200, 150, 255)
+			else
+				etaText = "⏱ klikaj żeby zarobić"
+				_G.nextGoalETA.TextColor3 = C.grey
+			end
+		elseif gType == "PITY" then
+			etaText = "🎲 rolluj jajka!"
+			_G.nextGoalETA.TextColor3 = C.gold
+		end
+		_G.nextGoalETA.Text = etaText
+	end
+
+	-- Linia prestige
+	if _G.nextGoalPres then
+		local spMagnetLv  = (localData.spUpgrades and localData.spUpgrades["sp_mult1"]) or 0
+		local spMult      = 1 + spMagnetLv * 0.20
+		local baseSP      = math.floor((localData.prestige or 0) / 3) + 1
+		local spEarned    = math.max(1, math.floor(baseSP * spMult))
+		if meta.isMaxPrestige then
+			_G.nextGoalPres.Text      = "Prestige: MAX ✓"
+			_G.nextGoalPres.TextColor3 = C.gold
+		else
+			local pct = math.floor((meta.prestigeProgress or 0) * 100)
+			_G.nextGoalPres.TextColor3 = pct >= 85 and C.green or C.gold
+			_G.nextGoalPres.Text = string.format(
+				"Prestige %d: %d%% → +%d SP",
+				(localData.prestige or 0) + 1, pct, spEarned
+			)
+		end
+	end
+end
+
+-- ============================================================
+-- ROOT GUI
+-- ============================================================
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name="ClickerGui"; screenGui.ResetOnSpawn=false
+screenGui.IgnoreGuiInset=true; screenGui.Parent=playerGui
+
+local rootScale = Instance.new("UIScale")
+rootScale.Parent = screenGui
+
+local BASE_VIEWPORT = Vector2.new(1366, 768)
+local function updateRootScale()
+	local cam = workspace.CurrentCamera
+	local vp = (cam and cam.ViewportSize) or Vector2.new(BASE_VIEWPORT.X, BASE_VIEWPORT.Y)
+	local sx = vp.X / BASE_VIEWPORT.X
+	local sy = vp.Y / BASE_VIEWPORT.Y
+	local s = math.clamp(math.min(sx, sy), 0.82, 1.75)
+	rootScale.Scale = s
+end
+updateRootScale()
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+	updateRootScale()
+	local cam = workspace.CurrentCamera
+	if cam then cam:GetPropertyChangedSignal("ViewportSize"):Connect(updateRootScale) end
+end)
+if workspace.CurrentCamera then
+	workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateRootScale)
+end
+
+local CONTAINER = frm(screenGui, {
+	Name="Container", Size=UDim2.new(5,0,1,0),
+	Position=UDim2.new(0,0,0,0), BackgroundTransparency=1, Visible=false,
+})
+
+local function makeScreen(index, bgColor)
+	local s = frm(CONTAINER, {
+		Size=UDim2.new(0.2,0,1,0), Position=UDim2.new(index*0.2,0,0,0),
+		BackgroundColor3=bgColor or C.bg0, ClipsDescendants=true,
+	})
+	return s
+end
+
+-- ============================================================
+-- BOTTOM NAV BAR
+-- ============================================================
+
+local NAV_H = 84
+local navBar = frm(screenGui, {
+	Size=UDim2.new(1,0,0,NAV_H), Position=UDim2.new(0,0,1,-NAV_H),
+	BackgroundColor3=C.bg1, ZIndex=20, Visible=false,
+})
+uistroke(navBar, C.purple, 1, 0.4)
+
+-- ============================================================
+-- LOADING SCREEN
+-- ============================================================
+
+local _loadIconsDone = false
+local _loadSyncDone  = false
+local _loadRevealed  = false
+local tryRevealUI
+
+do
+	local LOAD_MIN_TIME = 5
+
+	local loadGui = Instance.new("ScreenGui")
+	loadGui.Name = "ClickerLoadGui"; loadGui.ResetOnSpawn = false
+	loadGui.IgnoreGuiInset = true; loadGui.DisplayOrder = 999
+	loadGui.Parent = playerGui
+
+	local loadBg = frm(loadGui, {
+		Size=UDim2.new(1,0,1,0), BackgroundColor3=Color3.fromRGB(5,5,16), ZIndex=1,
+	})
+
+	for _ = 1, 90 do
+		local s = frm(loadBg, {
+			Size=UDim2.new(0,math.random(1,3),0,math.random(1,3)),
+			Position=UDim2.new(math.random(),0,math.random(),0),
+			BackgroundColor3=Color3.fromRGB(200,200,255),
+			BackgroundTransparency=math.random(4,9)/10, ZIndex=2,
+		})
+		corner(s, UDim.new(1,0))
+		local delay, spd = math.random()*4, 0.8 + math.random()*2.5
+		task.delay(delay, function()
+			if not loadBg.Parent then return end
+			local ti = TweenInfo.new(spd, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+			TweenService:Create(s, ti, {BackgroundTransparency=math.random(1,4)/10}):Play()
+		end)
+	end
+
+	local BLOB_COLORS = {Color3.fromRGB(80, 30, 180), Color3.fromRGB(30, 100, 200), Color3.fromRGB(140, 40, 220)}
+	local BLOB_POS = {{x=0.15, y=0.25}, {x=0.82, y=0.18}, {x=0.5, y=0.78}}
+	for i = 1, 3 do
+		local sz = math.random(260, 380)
+		local blob = frm(loadBg, {
+			Size=UDim2.new(0,sz,0,sz), Position=UDim2.new(BLOB_POS[i].x, -sz/2, BLOB_POS[i].y, -sz/2),
+			BackgroundColor3=BLOB_COLORS[i], BackgroundTransparency=0.82, ZIndex=2,
+		})
+		corner(blob, UDim.new(1,0))
+		local ti = TweenInfo.new(2.5+i*0.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+		TweenService:Create(blob, ti, {BackgroundTransparency=0.92}):Play()
+	end
+
+	local glowLine = frm(loadBg, {
+		Size=UDim2.new(0,0,0,2), Position=UDim2.new(0.5,0,0.47,0),
+		BackgroundColor3=Color3.fromRGB(255,210,0), BackgroundTransparency=0.3, ZIndex=3,
+		AnchorPoint=Vector2.new(0.5,0.5),
+	})
+	corner(glowLine, UDim.new(1,0))
+	TweenService:Create(glowLine, TweenInfo.new(0.8, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size=UDim2.new(0,420,0,2)}):Play()
+	task.spawn(function()
+		task.wait(0.9); if not loadBg.Parent then return end
+		local ti = TweenInfo.new(2.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+		TweenService:Create(glowLine, ti, {BackgroundTransparency=0.7}):Play()
+	end)
+
+	lbl(loadBg, {
+		Size=UDim2.new(1,0,0,70), Position=UDim2.new(0,0,0.33,0),
+		Text="PET CLICKER", TextColor3=Color3.fromRGB(255,215,60),
+		TextSize=66, Font=Enum.Font.Bangers, ZIndex=4,
+	})
+
+	local loadBarBg = frm(loadBg, {
+		Size=UDim2.new(0,380,0,10), Position=UDim2.new(0.5,-190,0.60,0),
+		BackgroundColor3=Color3.fromRGB(22,20,50), ZIndex=4,
+	})
+	corner(loadBarBg, UDim.new(1,0))
+	uistroke(loadBarBg, Color3.fromRGB(60,50,120), 1, 0.3)
+
+	local loadBarFill = frm(loadBarBg, {
+		Size=UDim2.new(0.04,0,1,0), BackgroundColor3=Color3.fromRGB(255,210,0), ZIndex=5,
+	})
+	corner(loadBarFill, UDim.new(1,0))
+	TweenService:Create(loadBarFill, TweenInfo.new(LOAD_MIN_TIME - 0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size=UDim2.new(0.80,0,1,0)}):Play()
+
+	local statusLabel = lbl(loadBg, {
+		Size=UDim2.new(0,380,0,20), Position=UDim2.new(0.5,-190,0.63,0),
+		Text="Initializing...", TextColor3=Color3.fromRGB(120,110,180),
+		TextSize=13, Font=Enum.Font.GothamMedium, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=4,
+	})
+
+	local LOAD_STEPS = {
+		{t=0.3, text="Connecting to server..."}, {t=0.9, text="Loading player data..."},
+		{t=1.6, text="Loading pets & eggs..."}, {t=2.3, text="Loading upgrades..."},
+		{t=3.0, text="Loading achievements..."}, {t=3.7, text="Loading UI assets..."},
+		{t=4.4, text="Finalizing interface..."}, {t=4.9, text="Almost ready..."},
+	}
+	task.spawn(function()
+		for _, step in ipairs(LOAD_STEPS) do
+			task.wait(step.t - (LOAD_STEPS[1] and 0 or 0))
+			if not loadBg.Parent then break end
+			statusLabel.Text = step.text
+			statusLabel.TextTransparency = 0.5
+			TweenService:Create(statusLabel, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {TextTransparency=0}):Play()
+			local nextIdx = nil
+			for j, s in ipairs(LOAD_STEPS) do if s == step then nextIdx = j+1 break end end
+			local waitTime = nextIdx and LOAD_STEPS[nextIdx] and (LOAD_STEPS[nextIdx].t - step.t) or 1.0
+			task.wait(waitTime)
+		end
+	end)
+
+	local _loadTimeDone = false
+	task.delay(LOAD_MIN_TIME, function()
+		_loadTimeDone = true
+		if _loadIconsDone and _loadSyncDone and not _loadRevealed then task.spawn(tryRevealUI) end
+	end)
+
+	tryRevealUI = function()
+		if _loadRevealed then return end
+		if not (_loadIconsDone and _loadSyncDone and _loadTimeDone) then return end
+		_loadRevealed = true
+		statusLabel.Text = "Done! Entering game..."
+		TweenService:Create(loadBarFill, TweenInfo.new(0.3), {Size=UDim2.new(1,0,1,0)}):Play()
+		task.wait(0.4)
+		CONTAINER.Visible = true
+		navBar.Visible = true
+		TweenService:Create(loadBg, TweenInfo.new(0.55, Enum.EasingStyle.Quad), {BackgroundTransparency=1}):Play()
+		task.delay(0.6, function() loadGui:Destroy() end)
+	end
+
+	_G._onIconsLoaded = function()
+		_loadIconsDone = true
+		task.spawn(tryRevealUI)
+	end
+
+	task.delay(13, function()
+		_loadIconsDone = true; _loadSyncDone = true; _loadTimeDone = true
+		task.spawn(tryRevealUI)
+	end)
+end
+
+local navGlow = frm(navBar, {
+	Size=UDim2.new(1,0,0,2), Position=UDim2.new(0,0,0,0), BackgroundColor3=C.purple, ZIndex=25,
+})
+pulse(navGlow, "BackgroundColor3", C.purple, C.cyan, 2.5)
+
+local NAV_TABS = {
+	{label="CLICK", icon="CLICK", screen=0, iconKey="nav_click"},
+	{label="PRESTIGE", icon="P", screen=1, iconKey="nav_prestige"},
+	{label="EGGS", icon="E", screen=2, iconKey="nav_eggs"},
+	{label="PETS", icon="PET", screen=3, iconKey="nav_pets"},
+	{label="ACHIEVEMENTS", icon="ACH", screen=4, iconKey="nav_achievements"},
+}
+
+local navBtns, navIndicators, navLabels = {}, {}, {}
+
+for i, tab in ipairs(NAV_TABS) do
+	local tabW = 1/#NAV_TABS
+	local b = tbtn(navBar, {
+		Size=UDim2.new(tabW,0,1,0), Position=UDim2.new(tabW*(i-1),0,0,0),
+		BackgroundColor3=C.bg3, BackgroundTransparency=1, Text="", ZIndex=22,
+	})
+	corner(b, UDim.new(0,0))
+	local iconL = lbl(b, {
+		Size=UDim2.new(1,0,0,38), Position=UDim2.new(0,0,0,7),
+		Text=tab.icon, TextSize=28, Font=Enum.Font.GothamBold, TextColor3=C.grey, ZIndex=23,
+	})
+	local iconImg = makeIconLabel(b, {
+		Size=UDim2.new(1,0,0,38), Position=UDim2.new(0,0,0,7), ZIndex=24, Visible=false,
+	})
+	setIcon(iconImg, tab.iconKey, iconL, tab.icon, C.grey)
+	local textL = lbl(b, {
+		Size=UDim2.new(1,0,0,22), Position=UDim2.new(0,0,0,48), Text=tab.label, TextColor3=C.grey,
+		TextSize=12, Font=Enum.Font.GothamBold, ZIndex=23,
+	})
+	local ind = frm(b, {
+		Size=UDim2.new(0.6,0,0,3), Position=UDim2.new(0.2,0,1,-3),
+		BackgroundColor3=C.gold, BackgroundTransparency=1, ZIndex=23,
+	})
+	corner(ind, UDim.new(1,0))
+	navBtns[i] = b; navIndicators[i] = ind; navLabels[i] = {icon=iconL, iconImg=iconImg, text=textL}
+end
+
+-- ============================================================
+-- MAIN VARIABLES
+-- ============================================================
+
+local S_MAIN
+local headerH
+local headerShowingSP = false
+local headerClickLabel, headerCPSLabel
+local headerPetEmoji, headerPetIconImage, headerPetName, headerPetMult
+local headerMultLabel
+local BTN_SIZE, BTN_CX, BTN_CY, BTN_OY
+local ring1, ring2, ring3
+local clickBtn, clickBtnIconImage, clickBtnIconFallback, clickStroke
+local statTotal, statCPC, statCPS, statPrestige
+local spBalanceLabel
+local upgradeScroll, spUpgradeScroll
+
+do
+	S_MAIN = makeScreen(0, C.bg0)
+	makeStars(S_MAIN, 60, C.white, 5, 9)
+
+	headerH = 72
+	local header = frm(S_MAIN, {
+		Size=UDim2.new(1,0,0,headerH), Position=UDim2.new(0,0,0,0), BackgroundColor3=C.bg1, ZIndex=3,
+	})
+	local headerBorder = frm(header, {
+		Size=UDim2.new(1,0,0,2), Position=UDim2.new(0,0,1,-2), BackgroundColor3=C.gold, ZIndex=4,
+	})
+	pulse(headerBorder, "BackgroundColor3", C.gold, C.cyan, 3)
+
+	local headerClickFrame = tbtn(header, {
+		Size=UDim2.new(0,320,0,56), Position=UDim2.new(0.5,-160,0,8), BackgroundColor3=C.bg2,
+		Text="", AutoButtonColor=false, BorderSizePixel=0, ZIndex=4,
+	})
+	corner(headerClickFrame, UDim.new(0,14))
+	local headerFrameStroke = uistroke(headerClickFrame, C.cyan, 2, 0.3)
+	local headerModeLabel = lbl(headerClickFrame, {
+		Size=UDim2.new(0,74,0,15), Position=UDim2.new(0,10,0,2), Text="CLICKS", TextColor3=C.cyan,
+		TextSize=11, Font=Enum.Font.GothamBold, ZIndex=6,
+	})
+	headerClickLabel = lbl(headerClickFrame, {
+		Size=UDim2.new(1,-12,0,30), Position=UDim2.new(0,6,0,14), Text="0", TextColor3=C.white,
+		TextSize=28, Font=Enum.Font.Bangers, ZIndex=5,
+	})
+	headerCPSLabel = lbl(headerClickFrame, {
+		Size=UDim2.new(1,0,0,15), Position=UDim2.new(0,0,0,41), Text="/s: 0", TextColor3=C.cyan,
+		TextSize=12, Font=Enum.Font.GothamMedium, ZIndex=5,
+	})
+
+	headerClickFrame.MouseButton1Click:Connect(function()
+		headerShowingSP = not headerShowingSP
+		if headerShowingSP then
+			headerModeLabel.Text = "💫 SP"; headerModeLabel.TextColor3 = C.gold
+			headerFrameStroke.Color = C.gold; headerClickLabel.TextColor3 = C.gold
+			headerClickLabel.Text = tostring(localData.starPoints or 0)
+			headerCPSLabel.Text = spBonusPreview(localData.starPoints or 0) .. " mult"; headerCPSLabel.TextColor3 = C.gold
+		else
+			headerModeLabel.Text = "CLICKS"; headerModeLabel.TextColor3 = C.cyan
+			headerFrameStroke.Color = C.cyan; headerClickLabel.TextColor3 = C.white
+			headerClickLabel.Text = fmt(localData.clicks)
+			headerCPSLabel.Text = "/s: " .. fmt(localData.clicksPerSecond); headerCPSLabel.TextColor3 = C.cyan
+		end
+	end)
+
+	local headerPetFrame = frm(header, {
+		Size=UDim2.new(0,188,0,56), Position=UDim2.new(1,-202,0,8), BackgroundColor3=C.bg2, ZIndex=4,
+	})
+	corner(headerPetFrame, UDim.new(0,14))
+	uistroke(headerPetFrame, C.purple, 2, 0.3)
+
+	headerPetEmoji = lbl(headerPetFrame, {
+		Size=UDim2.new(0,44,1,0), Position=UDim2.new(0,5,0,0), Text="PET", TextSize=30, Font=Enum.Font.GothamBold, ZIndex=5,
+	})
+	headerPetIconImage = makeIconLabel(headerPetFrame, {
+		Size=UDim2.new(0,44,1,0), Position=UDim2.new(0,5,0,0), ZIndex=6, Visible=false,
+	})
+	headerPetName = lbl(headerPetFrame, {
+		Size=UDim2.new(0,136,0,28), Position=UDim2.new(0,49,0,5), Text="Dog", TextColor3=C.white,
+		TextSize=16, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5,
+	})
+	headerPetMult = lbl(headerPetFrame, {
+		Size=UDim2.new(0,136,0,21), Position=UDim2.new(0,49,0,31), Text="x1.0 mult", TextColor3=C.grey,
+		TextSize=13, Font=Enum.Font.GothamMedium, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5,
+	})
+
+	local headerMultFrame = frm(header, {
+		Size=UDim2.new(0,176,0,56), Position=UDim2.new(0,175,0,8), BackgroundColor3=C.bg2, ZIndex=4,
+	})
+	corner(headerMultFrame, UDim.new(0,14))
+	local headerMultStroke = uistroke(headerMultFrame, C.gold, 2, 0.3)
+	lbl(headerMultFrame, {
+		Size=UDim2.new(1,0,0,16), Position=UDim2.new(0,0,0,3), Text="MULTIPLIER", TextColor3=C.gold,
+		TextSize=11, Font=Enum.Font.GothamBold, ZIndex=6,
+	})
+	headerMultLabel = lbl(headerMultFrame, {
+		Size=UDim2.new(1,-8,0,28), Position=UDim2.new(0,4,0,17), Text="×1", TextColor3=C.white,
+		TextSize=24, Font=Enum.Font.Bangers, ZIndex=5,
+	})
+	lbl(headerMultFrame, {
+		Size=UDim2.new(1,0,0,12), Position=UDim2.new(0,0,0,43), Text="per click", TextColor3=C.grey,
+		TextSize=10, Font=Enum.Font.GothamMedium, ZIndex=5,
+	})
+	pulse(headerMultStroke, "Transparency", 0.3, 0.7, 2.0)
+
+	BTN_SIZE = 280; BTN_CX = 0.5; BTN_CY = 0.5; BTN_OY = 20
+
+	ring3 = frm(S_MAIN, {
+		Size=UDim2.new(0,BTN_SIZE+80,0,BTN_SIZE+80), Position=UDim2.new(BTN_CX,-(BTN_SIZE+80)/2,BTN_CY,BTN_OY-(BTN_SIZE+80)/2),
+		BackgroundColor3=C.gold, BackgroundTransparency=0.93, ZIndex=3,
+	})
+	corner(ring3, UDim.new(1,0))
+
+	ring2 = frm(S_MAIN, {
+		Size=UDim2.new(0,BTN_SIZE+44,0,BTN_SIZE+44), Position=UDim2.new(BTN_CX,-(BTN_SIZE+44)/2,BTN_CY,BTN_OY-(BTN_SIZE+44)/2),
+		BackgroundColor3=C.gold, BackgroundTransparency=0.82, ZIndex=3,
+	})
+	corner(ring2, UDim.new(1,0))
+
+	ring1 = frm(S_MAIN, {
+		Size=UDim2.new(0,BTN_SIZE+16,0,BTN_SIZE+16), Position=UDim2.new(BTN_CX,-(BTN_SIZE+16)/2,BTN_CY,BTN_OY-(BTN_SIZE+16)/2),
+		BackgroundColor3=C.gold, BackgroundTransparency=0.7, ZIndex=4,
+	})
+	corner(ring1, UDim.new(1,0))
+
+	pulse(ring1, "BackgroundTransparency", 0.7, 0.88, 1.0)
+	pulse(ring2, "BackgroundTransparency", 0.82, 0.94, 1.3)
+	pulse(ring3, "BackgroundTransparency", 0.93, 0.97, 1.6)
+
+	clickBtn = tbtn(S_MAIN, {
+		Size=UDim2.new(0,BTN_SIZE,0,BTN_SIZE), Position=UDim2.new(BTN_CX,-BTN_SIZE/2,BTN_CY,BTN_OY-BTN_SIZE/2),
+		BackgroundColor3=Color3.fromRGB(255,195,0), Text="", TextSize=90, Font=Enum.Font.GothamBold, ZIndex=5,
+	})
+	clickBtnIconFallback = lbl(clickBtn, {
+		Size=UDim2.new(1,0,1,0), Position=UDim2.new(0,0,0,0), Text="EGG", TextSize=90, Font=Enum.Font.GothamBold,
+		TextColor3=Color3.fromRGB(20, 15, 8), ZIndex=6,
+	})
+	clickBtnIconImage = makeIconLabel(clickBtn, {
+		Size=UDim2.new(0.8,0,0.8,0), Position=UDim2.new(0.1,0,0.1,0), ZIndex=7, Visible=false,
+	})
+	corner(clickBtn, UDim.new(1,0))
+	clickStroke = uistroke(clickBtn, C.gold, 5)
+	pulse(clickStroke, "Transparency", 0.1, 0.5, 1.2)
+
+	local autoClickerBtn = tbtn(S_MAIN, {
+		Size=UDim2.new(0,200,0,36), Position=UDim2.new(BTN_CX,-100,0,headerH+2),
+		BackgroundColor3=C.bg2, Text="", TextSize=14, Font=Enum.Font.GothamBold, ZIndex=6,
+	})
+	corner(autoClickerBtn, UDim.new(0,12))
+	local autoClickerStroke = uistroke(autoClickerBtn, C.greyDark, 2, 0.2)
+	local autoClickerLabel = lbl(autoClickerBtn, {
+		Size=UDim2.new(1,0,1,0), Position=UDim2.new(0,0,0,0), Text="AUTOCLICKER: OFF", TextColor3=C.grey,
+		TextSize=14, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Center,
+		BackgroundTransparency=1, ZIndex=7,
+	})
+	do
+		local ts = Instance.new("UIStroke"); ts.Color = Color3.fromRGB(0,0,0); ts.Thickness = 2; ts.Transparency = 0
+		ts.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual; ts.Parent = autoClickerLabel
+	end
+
+	local autoClickWarning = frm(screenGui, {
+		Size=UDim2.new(0,260,0,44), Position=UDim2.new(0.5,-130,0.5,-22), BackgroundColor3=Color3.fromRGB(40,10,10),
+		Visible=false, ZIndex=100,
+	})
+	corner(autoClickWarning, UDim.new(0,10))
+	uistroke(autoClickWarning, C.red, 2, 0)
+	lbl(autoClickWarning, {
+		Size=UDim2.new(1,0,1,0), Text= "Cannot click manually during Autoclicker!", TextColor3=C.red,
+		TextSize=12, Font=Enum.Font.GothamBold, ZIndex=101,
+	})
+
+	local autoClickerActive = false
+	_G._autoClickerActive = false; _G._autoClickAccum = 0; _G._autoClickerBtn = autoClickerBtn; _G._autoClickWarning = autoClickWarning
+
+	autoClickerBtn.MouseButton1Click:Connect(function()
+		autoClickerActive = not autoClickerActive
+		_G._autoClickerActive = autoClickerActive
+		if autoClickerActive then
+			autoClickerLabel.Text = "AUTOCLICKER: ON"; autoClickerLabel.TextColor3 = C.green
+			autoClickerBtn.BackgroundColor3 = Color3.fromRGB(10,36,20)
+			autoClickerStroke.Color = C.green; autoClickerStroke.Thickness = 2; autoClickerStroke.Transparency = 0
+		else
+			autoClickerLabel.Text = "AUTOCLICKER: OFF"; autoClickerLabel.TextColor3 = C.grey
+			autoClickerBtn.BackgroundColor3 = C.bg2
+			autoClickerStroke.Color = C.greyDark; autoClickerStroke.Thickness = 2; autoClickerStroke.Transparency = 0.2
+			autoClickWarning.Visible = false; _G._autoClickAccum = 0
+		end
+	end)
+
+	local statsW, statsH = 210, 190
+	local statsPanel = frm(S_MAIN, {
+		Size=UDim2.new(0,statsW,0,statsH), Position=UDim2.new(0,14,0,headerH+14), BackgroundColor3=C.bg1, ZIndex=3,
+	})
+	corner(statsPanel, UDim.new(0,16))
+	uistroke(statsPanel, C.purpleDim, 1, 0.2)
+
+	lbl(statsPanel, {
+		Size=UDim2.new(1,0,0,38), Text="STATISTICS", TextColor3=C.cyan, TextSize=18, Font=Enum.Font.Bangers, ZIndex=4,
+	})
+	frm(statsPanel, {
+		Size=UDim2.new(0.85,0,0,1), Position=UDim2.new(0.075,0,0,38), BackgroundColor3=C.cyanDim, ZIndex=4,
+	})
+
+	local function statRow(y, key, val, col)
+		local row = frm(statsPanel, {
+			Size=UDim2.new(1,-16,0,30), Position=UDim2.new(0,8,0,y), BackgroundColor3=C.bg2, ZIndex=4,
+		})
+		corner(row, UDim.new(0,8))
+		lbl(row, {
+			Size=UDim2.new(0.52,0,1,0), Position=UDim2.new(0,8,0,0), Text=key, TextColor3=C.grey,
+			TextSize=13, Font=Enum.Font.GothamMedium, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5,
+		})
+		local valL = lbl(row, {
+			Size=UDim2.new(0.46,0,1,0), Position=UDim2.new(0.52,0,0,0), Text=val, TextColor3=col or C.white,
+			TextSize=14, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Right, ZIndex=5,
+		})
+		return valL
+	end
+
+	statTotal    = statRow(44,  "Total",      "0",    C.white)
+	statCPC      = statRow(78,  "Per Click",  "1",    C.cyan)
+	statCPS      = statRow(112, "Per Sec",    "0",    C.cyan)
+	statPrestige = statRow(146, "Prestige",   "0",    C.gold)
+
+	-- ¦¦ NEXT GOAL PANEL v2 ¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦
+	local nextGoalPanel = frm(S_MAIN, {
+		Size = UDim2.new(0, statsW, 0, 152),
+		Position = UDim2.new(0, 14, 0, headerH + 14 + statsH + 14),
+		BackgroundColor3 = C.bg1, ZIndex = 3,
+	})
+	corner(nextGoalPanel, UDim.new(0, 16))
+	uistroke(nextGoalPanel, C.cyanDim, 1, 0.2)
+
+	-- Nagłówek
+	lbl(nextGoalPanel, {
+		Size = UDim2.new(0, 100, 0, 20), Position = UDim2.new(0, 10, 0, 7),
+		Text = "🎯 NEXT GOAL", TextColor3 = C.cyan, TextSize = 13,
+		Font = Enum.Font.Bangers, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 4,
+	})
+
+	-- Badge: typ celu (UPGRADE / PRESTIGE / PITY)
+	local _ngTypeBg = frm(nextGoalPanel, {
+		Size = UDim2.new(0, 60, 0, 16), Position = UDim2.new(1, -70, 0, 9),
+		BackgroundColor3 = C.cyan, ZIndex = 4,
+	})
+	corner(_ngTypeBg, UDim.new(0, 4))
+	_G.nextGoalTypeBg    = _ngTypeBg
+	_G.nextGoalTypeLabel = lbl(_ngTypeBg, {
+		Size = UDim2.new(1, 0, 1, 0), Text = "UPGRADE",
+		TextColor3 = Color3.fromRGB(0, 0, 0), TextSize = 9,
+		Font = Enum.Font.GothamBold, ZIndex = 5,
+	})
+
+	-- Nazwa celu
+	_G.nextGoalName = lbl(nextGoalPanel, {
+		Size = UDim2.new(1, -20, 0, 18), Position = UDim2.new(0, 10, 0, 29),
+		Text = "???", TextColor3 = C.white, TextSize = 13,
+		Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 4,
+	})
+
+	-- Tekst dystansu
+	_G.nextGoalAway = lbl(nextGoalPanel, {
+		Size = UDim2.new(1, -20, 0, 13), Position = UDim2.new(0, 10, 0, 47),
+		Text = "0 clicks away", TextColor3 = C.grey, TextSize = 10,
+		Font = Enum.Font.GothamMedium, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 4,
+	})
+
+	-- Pasek postępu
+	local nextGoalBarBg = frm(nextGoalPanel, {
+		Size = UDim2.new(1, -20, 0, 9), Position = UDim2.new(0, 10, 0, 64),
+		BackgroundColor3 = Color3.fromRGB(18, 18, 38), ZIndex = 4,
+	})
+	corner(nextGoalBarBg, UDim.new(1, 0))
+	uistroke(nextGoalBarBg, Color3.fromRGB(40, 36, 70), 1, 0.3)
+
+	_G.nextGoalBarFill = frm(nextGoalBarBg, {
+		Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = C.cyan, ZIndex = 5,
+	})
+	corner(_G.nextGoalBarFill, UDim.new(1, 0))
+
+	-- Procent na pasku
+	_G.nextGoalPct = lbl(nextGoalBarBg, {
+		Size = UDim2.new(1, 0, 1, 0), Text = "0%",
+		TextColor3 = C.white, TextSize = 8,
+		Font = Enum.Font.GothamBold, ZIndex = 6,
+	})
+
+	-- ETA (szacowany czas)
+	_G.nextGoalETA = lbl(nextGoalPanel, {
+		Size = UDim2.new(1, -20, 0, 13), Position = UDim2.new(0, 10, 0, 77),
+		Text = "⏱ obliczanie...", TextColor3 = Color3.fromRGB(80, 200, 255), TextSize = 10,
+		Font = Enum.Font.GothamMedium, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 4,
+	})
+
+	-- Prestige info
+	_G.nextGoalPres = lbl(nextGoalPanel, {
+		Size = UDim2.new(1, -20, 0, 14), Position = UDim2.new(0, 10, 0, 94),
+		Text = "Prestige: 0% | +1 SP", TextColor3 = C.gold, TextSize = 10,
+		Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 4,
+	})
+
+	-- Detal
+	_G.nextGoalDetail = lbl(nextGoalPanel, {
+		Size = UDim2.new(1, -20, 0, 13), Position = UDim2.new(0, 10, 0, 112),
+		Text = "", TextColor3 = Color3.fromRGB(90, 80, 120), TextSize = 9,
+		Font = Enum.Font.GothamMedium, TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 4,
+	})
+
+	local upgW = 300
+	local upgradePanel = frm(S_MAIN, {
+		Size=UDim2.new(0,upgW,1,-headerH-NAV_H-14), Position=UDim2.new(1,-upgW-14,0,headerH+14),
+		BackgroundColor3=C.bg1, ClipsDescendants=true, ZIndex=3,
+	})
+	corner(upgradePanel, UDim.new(0,16))
+	uistroke(upgradePanel, C.purpleDim, 1, 0.2)
+
+	local TAB_H = 40; local TAB_PAD = 8
+	local tabContainer = frm(upgradePanel, {
+		Size=UDim2.new(1,-TAB_PAD*2,0,TAB_H), Position=UDim2.new(0,TAB_PAD,0,6), BackgroundTransparency=1, ZIndex=5,
+	})
+
+	local upgradeTabClicks = tbtn(tabContainer, {
+		Size=UDim2.new(0.5,-3,1,0), Position=UDim2.new(0,0,0,0), BackgroundColor3=C.gold,
+		Text="🎯 CLICKS", TextColor3=Color3.fromRGB(10,8,0), TextSize=16, Font=Enum.Font.Bangers,
+		AutoButtonColor=false, BorderSizePixel=0, ZIndex=5,
+	})
+	corner(upgradeTabClicks, UDim.new(0,8))
+
+	local upgradeTabSP = tbtn(tabContainer, {
+		Size=UDim2.new(0.5,-3,1,0), Position=UDim2.new(0.5,3,0,0), BackgroundColor3=C.bg3,
+		Text="💫 SP", TextColor3=C.grey, TextSize=16, Font=Enum.Font.Bangers,
+		AutoButtonColor=false, BorderSizePixel=0, ZIndex=5,
+	})
+	corner(upgradeTabSP, UDim.new(0,8))
+
+	frm(upgradePanel, {
+		Size=UDim2.new(1,-TAB_PAD*2,0,1), Position=UDim2.new(0,TAB_PAD,0,TAB_H+8), BackgroundColor3=C.greyDark, ZIndex=4,
+	})
+
+	local TAB_BOTTOM = 6 + TAB_H + 12
+
+	local spBalanceBar = frm(upgradePanel, {
+		Size=UDim2.new(1,-TAB_PAD*2,0,30), Position=UDim2.new(0,TAB_PAD,0,TAB_BOTTOM), BackgroundColor3=C.bg2, Visible=false, ZIndex=5,
+	})
+	corner(spBalanceBar, UDim.new(0,8)); uistroke(spBalanceBar, C.gold, 1, 0.3)
+	lbl(spBalanceBar, {
+		Size=UDim2.new(0.44,0,1,0), Position=UDim2.new(0,6,0,0), Text="💫 SP:", TextColor3=C.grey,
+		TextSize=12, Font=Enum.Font.GothamBold, ZIndex=6, TextXAlignment=Enum.TextXAlignment.Left,
+	})
+	spBalanceLabel = lbl(spBalanceBar, {
+		Size=UDim2.new(1,-8,1,0), Position=UDim2.new(0,0,0,0), Text="0", TextColor3=C.gold,
+		TextSize=16, Font=Enum.Font.Bangers, ZIndex=6, TextXAlignment=Enum.TextXAlignment.Right,
+	})
+
+	upgradeScroll = Instance.new("ScrollingFrame")
+	upgradeScroll.Size=UDim2.new(1,-TAB_PAD*2,1,-TAB_BOTTOM-6); upgradeScroll.Position=UDim2.new(0,TAB_PAD,0,TAB_BOTTOM)
+	upgradeScroll.BackgroundTransparency=1; upgradeScroll.ScrollBarThickness=4; upgradeScroll.ScrollBarImageColor3=C.purple
+	upgradeScroll.BorderSizePixel=0; upgradeScroll.ZIndex=3; upgradeScroll.Parent=upgradePanel
+	local upgrLayout = Instance.new("UIListLayout", upgradeScroll); upgrLayout.Padding=UDim.new(0,6)
+	Instance.new("UIPadding", upgradeScroll).PaddingTop=UDim.new(0,4)
+
+	spUpgradeScroll = Instance.new("ScrollingFrame")
+	spUpgradeScroll.Size=UDim2.new(1,-TAB_PAD*2,1,-TAB_BOTTOM-36); spUpgradeScroll.Position=UDim2.new(0,TAB_PAD,0,TAB_BOTTOM+36)
+	spUpgradeScroll.BackgroundTransparency=1; spUpgradeScroll.ScrollBarThickness=4; spUpgradeScroll.ScrollBarImageColor3=C.gold
+	spUpgradeScroll.BorderSizePixel=0; spUpgradeScroll.ZIndex=3; spUpgradeScroll.Visible=false; spUpgradeScroll.Parent=upgradePanel
+	local spUpgrLayout = Instance.new("UIListLayout", spUpgradeScroll); spUpgrLayout.Padding=UDim.new(0,6)
+	Instance.new("UIPadding", spUpgradeScroll).PaddingTop=UDim.new(0,4)
+
+	local currentUpgradeTab = "clicks"
+	local function switchUpgradeTab(tab)
+		currentUpgradeTab = tab
+		if tab == "clicks" then
+			upgradeScroll.Visible = true; spUpgradeScroll.Visible = false; spBalanceBar.Visible = false
+			upgradeTabClicks.BackgroundColor3 = C.gold; upgradeTabClicks.TextColor3 = Color3.fromRGB(10,8,0)
+			upgradeTabSP.BackgroundColor3 = C.bg3; upgradeTabSP.TextColor3 = C.grey
+		else
+			upgradeScroll.Visible = false; spUpgradeScroll.Visible = true; spBalanceBar.Visible = true
+			upgradeTabClicks.BackgroundColor3 = C.bg3; upgradeTabClicks.TextColor3 = C.grey
+			upgradeTabSP.BackgroundColor3 = C.gold; upgradeTabSP.TextColor3 = Color3.fromRGB(10,8,0)
+		end
+	end
+	upgradeTabClicks.MouseEnter:Connect(function() if currentUpgradeTab ~= "clicks" then tw(upgradeTabClicks, FAST, {BackgroundColor3=Color3.fromRGB(210,165,0)}):Play() end end)
+	upgradeTabClicks.MouseLeave:Connect(function() if currentUpgradeTab ~= "clicks" then tw(upgradeTabClicks, FAST, {BackgroundColor3=C.bg3}):Play() end end)
+	upgradeTabClicks.MouseButton1Click:Connect(function() switchUpgradeTab("clicks") end)
+
+	upgradeTabSP.MouseEnter:Connect(function() if currentUpgradeTab ~= "sp" then tw(upgradeTabSP, FAST, {BackgroundColor3=Color3.fromRGB(210,165,0)}):Play() end end)
+	upgradeTabSP.MouseLeave:Connect(function() if currentUpgradeTab ~= "sp" then tw(upgradeTabSP, FAST, {BackgroundColor3=C.bg3}):Play() end end)
+	upgradeTabSP.MouseButton1Click:Connect(function() switchUpgradeTab("sp") end)
+end
+
+-- ============================================================
+-- PRESTIGE
+-- ============================================================
+
+local PresUI = { hovered = false }
+
+do
+	local S_PRES = makeScreen(1, Color3.fromRGB(8,5,22))
+	makeStars(S_PRES, 80, Color3.fromRGB(220,180,255), 4, 8)
+
+	local presHeader = frm(S_PRES, {Size=UDim2.new(1,0,0,headerH), BackgroundColor3=Color3.fromRGB(12,8,30), ZIndex=3})
+	frm(presHeader, {Size=UDim2.new(1,0,0,2), Position=UDim2.new(0,0,1,-2), BackgroundColor3=C.purple, ZIndex=4})
+	lbl(presHeader, {Size=UDim2.new(1,0,1,0), Text="💫  PRESTIGE  💫", TextColor3=C.purple, TextSize=36, Font=Enum.Font.Bangers, ZIndex=4})
+
+	local presCardW, presCardH = 700, 470
+	local presCard = frm(S_PRES, {Size=UDim2.new(0,presCardW,0,presCardH), Position=UDim2.new(0.5,-presCardW/2,0,headerH+18), BackgroundColor3=C.bg1, ZIndex=3})
+	corner(presCard, UDim.new(0,20)); uistroke(presCard, C.purple, 2, 0)
+
+	local presLeft = frm(presCard, {Size=UDim2.new(0.54,0,1,-18), Position=UDim2.new(0,12,0,12), BackgroundTransparency=1, ZIndex=4})
+	local presRight = frm(presCard, {Size=UDim2.new(0.38,0,1,-18), Position=UDim2.new(0.59,0,0,12), BackgroundTransparency=1, ZIndex=4})
+
+	lbl(presLeft, {Size=UDim2.new(1,0,0,36), Text="What you GAIN:", TextColor3=C.green, TextSize=18, Font=Enum.Font.Bangers, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5})
+
+	local gainItems = { {"+50% click multiplier per prestige", C.gold}, {"+50% auto-click multiplier", C.gold}, {"Stacks with all upgrades", C.cyan} }
+	for i, item in ipairs(gainItems) do
+		local row = frm(presLeft, {Size=UDim2.new(1,0,0,36), Position=UDim2.new(0,0,0,36+(i-1)*42), BackgroundColor3=Color3.fromRGB(18,40,22), ZIndex=5})
+		corner(row, UDim.new(0,10)); uistroke(row, C.green, 1, 0.5)
+		lbl(row, {Size=UDim2.new(1,-10,1,0), Position=UDim2.new(0,5,0,0), Text="✓ " .. item[1], TextColor3=item[2], TextSize=13, Font=Enum.Font.GothamMedium, TextXAlignment=Enum.TextXAlignment.Left, TextWrapped=true, ZIndex=6})
+	end
+
+	lbl(presLeft, {Size=UDim2.new(1,0,0,30), Position=UDim2.new(0,0,0,168), Text="What you LOSE:", TextColor3=C.red, TextSize=18, Font=Enum.Font.Bangers, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5})
+
+	local loseItems = {"All clicks", "All upgrades"}
+	for i, item in ipairs(loseItems) do
+		local row = frm(presLeft, {Size=UDim2.new(1,0,0,32), Position=UDim2.new(0,0,0,200+(i-1)*38), BackgroundColor3=Color3.fromRGB(40,12,12), ZIndex=5})
+		corner(row, UDim.new(0,10)); uistroke(row, C.red, 1, 0.5)
+		lbl(row, {Size=UDim2.new(1,-10,1,0), Position=UDim2.new(0,5,0,0), Text="X " .. item, TextColor3=C.red, TextSize=13, Font=Enum.Font.GothamMedium, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=6})
+	end
+
+	local keepRow = frm(presLeft, {Size=UDim2.new(1,0,0,36), Position=UDim2.new(0,0,0,280), BackgroundColor3=Color3.fromRGB(20,40,60), ZIndex=5})
+	corner(keepRow, UDim.new(0,10)); uistroke(keepRow, C.cyan, 1, 0.4)
+	lbl(keepRow, {Size=UDim2.new(1,-10,1,0), Position=UDim2.new(0,5,0,0), Text="🐾 All pets are SAFE!", TextColor3=C.cyan, TextSize=14, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=6})
+
+	lbl(presRight, {Size=UDim2.new(1,0,0,36), Text="Your Progress:", TextColor3=C.gold, TextSize=18, Font=Enum.Font.Bangers, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5})
+
+	local presLevelBox = frm(presRight, {Size=UDim2.new(1,0,0,64), Position=UDim2.new(0,0,0,40), BackgroundColor3=C.bg2, ZIndex=5})
+	corner(presLevelBox, UDim.new(0,12)); uistroke(presLevelBox, C.purple, 2, 0.2)
+	PresUI.levelNum = lbl(presLevelBox, {Size=UDim2.new(1,0,0,38), Position=UDim2.new(0,0,0,2), Text="0", TextColor3=C.purple, TextSize=34, Font=Enum.Font.Bangers, ZIndex=6})
+	lbl(presLevelBox, {Size=UDim2.new(1,0,0,20), Position=UDim2.new(0,0,0,40), Text="PRESTIGE LEVEL", TextColor3=C.grey, TextSize=11, Font=Enum.Font.GothamBold, ZIndex=6})
+
+	local presBonusBox = frm(presRight, {Size=UDim2.new(1,0,0,52), Position=UDim2.new(0,0,0,112), BackgroundColor3=C.bg2, ZIndex=5})
+	corner(presBonusBox, UDim.new(0,12)); uistroke(presBonusBox, C.gold, 2, 0.2)
+	PresUI.bonusLabel = lbl(presBonusBox, {Size=UDim2.new(1,0,0,30), Position=UDim2.new(0,0,0,2), Text="+0%", TextColor3=C.gold, TextSize=26, Font=Enum.Font.Bangers, ZIndex=6})
+	lbl(presBonusBox, {Size=UDim2.new(1,0,0,18), Position=UDim2.new(0,0,0,32), Text="SP MULT", TextColor3=C.grey, TextSize=11, Font=Enum.Font.GothamBold, ZIndex=6})
+
+	local presReqBox = frm(presRight, {Size=UDim2.new(1,0,0,52), Position=UDim2.new(0,0,0,172), BackgroundColor3=C.bg2, ZIndex=5})
+	corner(presReqBox, UDim.new(0,12))
+	PresUI.reqLabel = lbl(presReqBox, {Size=UDim2.new(1,-8,0,30), Position=UDim2.new(0,4,0,2), Text="0", TextColor3=C.red, TextSize=18, Font=Enum.Font.Bangers, ZIndex=6})
+	lbl(presReqBox, {Size=UDim2.new(1,0,0,18), Position=UDim2.new(0,0,0,32), Text="NEEDED", TextColor3=C.grey, TextSize=11, Font=Enum.Font.GothamBold, ZIndex=6})
+	PresUI.reqStroke = uistroke(presReqBox, C.red, 2, 0.3)
+
+	PresUI.btn = tbtn(presCard, {Size=UDim2.new(0.7,0,0,54), Position=UDim2.new(0.15,0,0,presCardH-70), BackgroundColor3=C.purpleDim, Text="PRESTIGE NOW!", TextColor3=C.white, TextSize=24, Font=Enum.Font.Bangers, ZIndex=4})
+	corner(PresUI.btn, UDim.new(0,16)); uistroke(PresUI.btn, C.purple, 3, 0)
+
+	PresUI.btn.MouseEnter:Connect(function()
+		PresUI.hovered = true
+		local can = (localData.totalClicks or 0) >= 1000000 * (10 ^ (localData.prestige or 0))
+		tw(PresUI.btn, FAST, {BackgroundColor3 = can and Color3.fromRGB(85, 25, 155) or Color3.fromRGB(70, 55, 110)}):Play()
+	end)
+	PresUI.btn.MouseLeave:Connect(function()
+		PresUI.hovered = false
+		local can = (localData.totalClicks or 0) >= 1000000 * (10 ^ (localData.prestige or 0))
+		tw(PresUI.btn, FAST, {BackgroundColor3 = can and C.purpleDim or Color3.fromRGB(40, 30, 55)}):Play()
+	end)
+end
+
+-- ============================================================
+-- EGGS / GACHA
+-- ============================================================
+
+local EggUI = { rollBtns = {}, rollStrokes = {}, pityLabels = {} }
+local getEffectiveEggCost
+
+do
+	local EGG_THEME = {
+		screenBg       = Color3.fromRGB(7, 7, 16),
+		headerBg       = Color3.fromRGB(11, 10, 22),
+		headerLine     = Color3.fromRGB(160, 92, 255),
+		headerText     = Color3.fromRGB(222, 186, 255),
+		cardBg         = Color3.fromRGB(13, 12, 25),
+		cardSoft       = Color3.fromRGB(18, 16, 35),
+		counterBg      = Color3.fromRGB(17, 15, 32),
+		counterStroke  = Color3.fromRGB(255, 192, 36),
+		listHeaderBg   = Color3.fromRGB(18, 16, 32),
+		listHeaderText = Color3.fromRGB(152, 146, 188),
+		rowText        = Color3.fromRGB(236, 234, 247),
+	}
+	local EGG_ROW_BG = { Default = Color3.fromRGB(38, 36, 54), Common = Color3.fromRGB(44, 42, 62), Uncommon = Color3.fromRGB(13, 54, 27), Rare = Color3.fromRGB(12, 31, 70), Epic = Color3.fromRGB(46, 16, 71), Legendary = Color3.fromRGB(58, 44, 9), Mythic = Color3.fromRGB(62, 13, 13) }
+	local EGG_TAG_BG = { Default = Color3.fromRGB(158, 158, 168), Common = Color3.fromRGB(208, 208, 214), Uncommon = Color3.fromRGB(84, 236, 118), Rare = Color3.fromRGB(74, 154, 255), Epic = Color3.fromRGB(186, 94, 255), Legendary = Color3.fromRGB(255, 205, 40), Mythic = Color3.fromRGB(255, 78, 78) }
+	local EGG_TAG_TEXT = { Default = Color3.fromRGB(18, 18, 24), Common = Color3.fromRGB(18, 18, 24), Uncommon = Color3.fromRGB(6, 22, 10), Rare = Color3.fromRGB(8, 16, 34), Epic = Color3.fromRGB(20, 8, 35), Legendary = Color3.fromRGB(26, 17, 0), Mythic = Color3.fromRGB(18, 0, 0) }
+
+	local function getEggRarityColor(rarity) return PET_RARITY_NEON[rarity] or RARITY_COLOR[rarity] or C.grey end
+
+	local S_EGGS = makeScreen(2, EGG_THEME.screenBg)
+	makeStars(S_EGGS, 75, Color3.fromRGB(216, 158, 255), 5, 9)
+
+	local eggsHeader = frm(S_EGGS, {Size=UDim2.new(1,0,0,headerH), BackgroundColor3=EGG_THEME.headerBg, ZIndex=3})
+	frm(eggsHeader, {Size=UDim2.new(1,0,0,2), Position=UDim2.new(0,0,1,-2), BackgroundColor3=EGG_THEME.headerLine, ZIndex=4})
+	lbl(eggsHeader, {Size=UDim2.new(1,0,1,0), Text="🔮  GACHA EGGS  🔮", TextColor3=EGG_THEME.headerText, TextSize=30, Font=Enum.Font.Bangers, TextXAlignment=Enum.TextXAlignment.Center, ZIndex=4})
+
+	local eggsCounterFrame = frm(eggsHeader, {Size=UDim2.new(0,130,0,52), Position=UDim2.new(1,-148,0,10), BackgroundColor3=EGG_THEME.counterBg, ZIndex=4})
+	corner(eggsCounterFrame, UDim.new(0,12)); uistroke(eggsCounterFrame, EGG_THEME.counterStroke, 2, 0.1)
+	lbl(eggsCounterFrame, {Size=UDim2.new(1,0,0,16), Position=UDim2.new(0,0,0,2), Text="you have:", TextColor3=C.grey, TextSize=11, Font=Enum.Font.GothamMedium, TextXAlignment=Enum.TextXAlignment.Center, ZIndex=5})
+	EggUI.clickLabel = lbl(eggsCounterFrame, {Size=UDim2.new(1,0,0,28), Position=UDim2.new(0,0,0,18), Text="0", TextColor3=EGG_THEME.counterStroke, TextSize=22, Font=Enum.Font.Bangers, TextXAlignment=Enum.TextXAlignment.Center, ZIndex=5})
+
+	local eggsScroll = Instance.new("ScrollingFrame")
+	eggsScroll.Size = UDim2.new(1, 0, 1, -headerH - NAV_H)
+	eggsScroll.Position = UDim2.new(0, 0, 0, headerH)
+	eggsScroll.BackgroundTransparency = 1
+	eggsScroll.ScrollBarThickness = 8
+	eggsScroll.ScrollingDirection = Enum.ScrollingDirection.XY
+	eggsScroll.Parent = S_EGGS
+
+	local eggLayout = Instance.new("UIListLayout", eggsScroll)
+	eggLayout.FillDirection = Enum.FillDirection.Horizontal
+	eggLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	eggLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	eggLayout.Padding = UDim.new(0, 30)
+	eggLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	eggLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		eggsScroll.CanvasSize = UDim2.new(0, eggLayout.AbsoluteContentSize.X + 60, 0, eggLayout.AbsoluteContentSize.Y + 40)
+	end)
+
+	local function buildEggCard(eggNum)
+		local info = EGG_INFO[eggNum]
+		local pets = EGG_PETS[eggNum]
+		local ROW_H = 36; local ROW_GAP = 3
+
+		local card = frm(eggsScroll, {
+			Size=UDim2.new(0,330,0,560), LayoutOrder = eggNum,
+			BackgroundColor3=EGG_THEME.cardBg, ZIndex=3,
+		})
+		corner(card, UDim.new(0,16)); uistroke(card, info.glow, 2, 0.1)
+		local cardGrad = Instance.new("UIGradient")
+		cardGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, EGG_THEME.cardBg), ColorSequenceKeypoint.new(1, EGG_THEME.cardSoft)})
+		cardGrad.Rotation = 90; cardGrad.Parent = card
+
+		local eggEmoji = lbl(card, {Size=UDim2.new(1,0,0,72), Position=UDim2.new(0,0,0,6), Text=info.emoji, TextSize=50, Font=Enum.Font.GothamBold, ZIndex=4})
+		local eggIconImg = makeIconLabel(card, {Size=UDim2.new(0,62,0,62), Position=UDim2.new(0.5,-31,0,9), ZIndex=5, Visible=false})
+		setIcon(eggIconImg, "egg_" .. tostring(eggNum), eggEmoji, info.emoji, info.color)
+		if not eggIconImg.Visible then pulse(eggEmoji, "TextSize", 50, 56, 1.4) end
+
+		lbl(card, {Size=UDim2.new(1,0,0,26), Position=UDim2.new(0,0,0,78), Text=info.name, TextColor3=info.color, TextSize=19, Font=Enum.Font.Bangers, ZIndex=4})
+
+		local costBadge = frm(card, {Size=UDim2.new(0.72,0,0,26), Position=UDim2.new(0.14,0,0,104), BackgroundColor3=Color3.fromRGB(18, 16, 33), ZIndex=4})
+		corner(costBadge, UDim.new(0,8)); uistroke(costBadge, info.color, 1, 0.2)
+		lbl(costBadge, {Size=UDim2.new(1,0,1,0), Text="💰 " .. fmt(info.cost), TextColor3=Color3.fromRGB(244, 238, 255), TextSize=13, Font=Enum.Font.GothamBold, ZIndex=5})
+
+		local listHeaderY = 136
+		frm(card, {Size=UDim2.new(0.9,0,0,20), Position=UDim2.new(0.05,0,0,listHeaderY), BackgroundColor3=EGG_THEME.listHeaderBg, ZIndex=4})
+		lbl(card, {Size=UDim2.new(0.32,0,0,20), Position=UDim2.new(0.05,0,0,listHeaderY), Text="PET", TextColor3=EGG_THEME.listHeaderText, TextSize=10, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5})
+		lbl(card, {Size=UDim2.new(0.22,0,0,20), Position=UDim2.new(0.37,0,0,listHeaderY), Text="RARITY", TextColor3=EGG_THEME.listHeaderText, TextSize=10, Font=Enum.Font.GothamBold, ZIndex=5})
+		lbl(card, {Size=UDim2.new(0.18,0,0,20), Position=UDim2.new(0.61,0,0,listHeaderY), Text="MULT", TextColor3=EGG_THEME.listHeaderText, TextSize=10, Font=Enum.Font.GothamBold, ZIndex=5})
+		lbl(card, {Size=UDim2.new(0.18,0,0,20), Position=UDim2.new(0.79,0,0,listHeaderY), Text="CHANCE", TextColor3=EGG_THEME.listHeaderText, TextSize=10, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Right, ZIndex=5})
+
+		frm(card, {Size=UDim2.new(0.9,0,0,1), Position=UDim2.new(0.05,0,0,155), BackgroundColor3=C.greyDark, ZIndex=4})
+
+		local listScroll = Instance.new("ScrollingFrame")
+		listScroll.Size = UDim2.new(1, 0, 1, -155 - 50)
+		listScroll.Position = UDim2.new(0, 0, 0, 155)
+		listScroll.BackgroundTransparency = 1
+		listScroll.ScrollBarThickness = 4
+		listScroll.BorderSizePixel = 0
+		listScroll.ZIndex = 4
+		listScroll.Parent = card
+
+		local pY = 0
+		local totalChance = 0
+		for _, pe in ipairs(pets) do totalChance += pe.chance end
+
+		for _, petEntry in ipairs(pets) do
+			local petId  = petEntry.id
+			local pd  = PET_DATA[petId]
+			local rarity = pd.rarity or "Default"
+			local rc  = getEggRarityColor(rarity)
+			local rbg = EGG_ROW_BG[rarity] or EGG_ROW_BG.Default
+
+			local row = frm(listScroll, {
+				Size=UDim2.new(0.9,0,0,ROW_H), Position=UDim2.new(0.05,0,0,pY), BackgroundColor3=rbg, ZIndex=4,
+			})
+			corner(row, UDim.new(0,8)); uistroke(row, rc, 1, 0.3)
+			frm(row, {Size=UDim2.new(0,3,1,-6), Position=UDim2.new(0,0,0,3), BackgroundColor3=rc, ZIndex=5})
+
+			local rowIconFallback = lbl(row, {Size=UDim2.new(0,28,1,0), Position=UDim2.new(0,4,0,0), Text=pd.emoji, TextSize=20, Font=Enum.Font.GothamBold, ZIndex=5})
+			local rowIconImage = makeIconLabel(row, {Size=UDim2.new(0,18,0,18), Position=UDim2.new(0,9,0.5,-9), ZIndex=6, Visible=false})
+			setIcon(rowIconImage, "pet_" .. tostring(petId), rowIconFallback, pd.emoji, rc)
+
+			lbl(row, {Size=UDim2.new(0.3,0,1,0), Position=UDim2.new(0,32,0,0), Text=pd.name, TextColor3=EGG_THEME.rowText, TextSize=11, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5})
+
+			local rtag = frm(row, {Size=UDim2.new(0,52,0,18), Position=UDim2.new(0.41,0,0.5,-9), BackgroundColor3=EGG_TAG_BG[rarity] or EGG_TAG_BG.Default, ZIndex=5})
+			corner(rtag, UDim.new(0,5))
+			lbl(rtag, {Size=UDim2.new(1,0,1,0), Text=rarity, TextColor3=EGG_TAG_TEXT[rarity] or EGG_TAG_TEXT.Default, TextSize=9, Font=Enum.Font.GothamBold, ZIndex=6})
+
+			lbl(row, {Size=UDim2.new(0,32,1,0), Position=UDim2.new(0.63,15,0,0), Text="x"..pd.multiplier, TextColor3=rc, TextSize=12, Font=Enum.Font.Bangers, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5})
+
+			local pct = petEntry.chance / totalChance * 100
+			local pctStr = pct < 0.5 and string.format("%.2f%%", pct) or (pct < 1 and string.format("%.1f%%", pct) or string.format("%d%%", math.floor(pct + 0.5)))
+			lbl(row, {Size=UDim2.new(0,40,1,0), Position=UDim2.new(1,-42,0,0), Text=pctStr, TextColor3=rc, TextSize=12, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Right, ZIndex=5})
+
+			pY += ROW_H + ROW_GAP
+		end
+
+		listScroll.CanvasSize = UDim2.new(0, 0, 0, pY)
+
+		local rollBtn = tbtn(card, {
+			Size=UDim2.new(0.82,0,0,36), Position=UDim2.new(0.09,0,1,-44), BackgroundColor3=Color3.fromRGB(18, 16, 33),
+			Text="ROLL!", TextColor3=info.color, TextSize=19, Font=Enum.Font.Bangers, ZIndex=4,
+		})
+		corner(rollBtn, UDim.new(0,14)); local rStroke = uistroke(rollBtn, info.color, 2, 0.05)
+		pulse(rollBtn, "BackgroundTransparency", 0, 0.12, 2.8)
+
+		local pityLbl = lbl(card, {Size=UDim2.new(0.9,0,0,16), Position=UDim2.new(0.05,0,1,-20), Text="Pity: 0/30 Leg | 0/100 Mythic", TextColor3=Color3.fromRGB(120, 110, 140), TextSize=11, Font=Enum.Font.GothamMedium, ZIndex=4})
+		EggUI.pityLabels[eggNum] = pityLbl
+
+		EggUI.rollBtns[eggNum] = rollBtn
+		EggUI.rollStrokes[eggNum] = rStroke
+		return card
+	end
+
+	buildEggCard(1)
+	buildEggCard(2)
+	buildEggCard(3)
+end
+
+-- ============================================================
+-- INVENTORY / PETS
+-- ============================================================
+
+local S_INV = makeScreen(3, PET_THEME.screenBg)
+makeStars(S_INV, 70, Color3.fromRGB(242,156,255), 5, 9)
+
+local invHeader = frm(S_INV, {Size=UDim2.new(1,0,0,headerH), BackgroundColor3=PET_THEME.headerBg, ZIndex=3})
+frm(invHeader, {Size=UDim2.new(1,0,0,2), Position=UDim2.new(0,0,1,-2), BackgroundColor3=PET_THEME.headerLine, ZIndex=4})
+lbl(invHeader, {Size=UDim2.new(1,0,1,0), Text="🦁  PET INVENTORY  🦁", TextColor3=PET_THEME.headerText, TextSize=32, Font=Enum.Font.Bangers, ZIndex=4})
+
+local equippedBanner = frm(S_INV, {Size=UDim2.new(0,760,0,86), Position=UDim2.new(0.5,-380,0,headerH+10), BackgroundColor3=PET_THEME.panelBg, ZIndex=3})
+corner(equippedBanner, UDim.new(0,16)); local equippedBannerStroke = uistroke(equippedBanner, PET_THEME.panelStroke, 2, 0.05)
+
+local equippedEmoji = lbl(equippedBanner, {Size=UDim2.new(0,72,1,0), Position=UDim2.new(0,8,0,0), Text="PET", TextSize=50, Font=Enum.Font.GothamBold, ZIndex=4})
+local equippedIconImage = makeIconLabel(equippedBanner, {Size=UDim2.new(0,72,1,0), Position=UDim2.new(0,8,0,0), ZIndex=5, Visible=false})
+lbl(equippedBanner, {Size=UDim2.new(0,72,0,22), Position=UDim2.new(0,8,1,-22), Text="EQUIPPED", TextColor3=PET_THEME.equipLabel, TextSize=10, Font=Enum.Font.GothamBold, ZIndex=4})
+local equippedName = lbl(equippedBanner, {Size=UDim2.new(0,360,0,34), Position=UDim2.new(0,86,0,10), Text="Dog", TextColor3=C.white, TextSize=26, Font=Enum.Font.Bangers, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=4})
+local equippedRarity = lbl(equippedBanner, {Size=UDim2.new(0,220,0,24), Position=UDim2.new(0,86,0,46), Text="Default", TextColor3=Color3.fromRGB(188, 175, 220), TextSize=15, Font=Enum.Font.GothamMedium, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=4})
+local equippedMult = lbl(equippedBanner, {Size=UDim2.new(0,170,0,40), Position=UDim2.new(1,-184,0,10), Text="x1.0", TextColor3=C.gold, TextSize=38, Font=Enum.Font.Bangers, TextXAlignment=Enum.TextXAlignment.Right, ZIndex=4})
+lbl(equippedBanner, {Size=UDim2.new(0,170,0,22), Position=UDim2.new(1,-184,0,50), Text="MULTIPLIER", TextColor3=Color3.fromRGB(188, 175, 220), TextSize=11, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Right, ZIndex=4})
+
+local SORT_MODES = { "Highest Multiplier", "Rarest", "Lowest Multiplier", "Most Common" }
+local currentSortIdx = 1
+
+local sortBtn = tbtn(S_INV, {Size=UDim2.new(0,200,0,32), Position=UDim2.new(1,-214,0,headerH+16), BackgroundColor3=PET_THEME.panelBg, Text="Sort: Highest Multiplier", TextColor3=C.cyan, TextSize=13, Font=Enum.Font.GothamBold, ZIndex=4})
+corner(sortBtn, UDim.new(0,8)); uistroke(sortBtn, C.cyan, 1, 0.3)
+sortBtn.MouseButton1Click:Connect(function()
+	currentSortIdx = (currentSortIdx % 4) + 1
+	sortBtn.Text = "Sort: " .. SORT_MODES[currentSortIdx]
+	refreshInventory()
+end)
+
+local invScroll = Instance.new("ScrollingFrame")
+invScroll.Size=UDim2.new(1,-28,1,-headerH-NAV_H-126); invScroll.Position=UDim2.new(0,14,0,headerH+122)
+invScroll.BackgroundTransparency=1; invScroll.ScrollBarThickness=5; invScroll.ScrollBarImageColor3=PET_THEME.headerLine; invScroll.BorderSizePixel=0; invScroll.ZIndex=3; invScroll.Parent=S_INV
+
+local invGrid = Instance.new("UIGridLayout")
+invGrid.CellSize=UDim2.new(0,170,0,244); invGrid.CellPadding=UDim2.new(0,12,0,12)
+invGrid.SortOrder=Enum.SortOrder.LayoutOrder
+invGrid.HorizontalAlignment=Enum.HorizontalAlignment.Center; invGrid.Parent=invScroll
+invGrid.FillDirection = Enum.FillDirection.Horizontal
+invGrid.FillDirectionMaxCells = 6
+Instance.new("UIPadding", invScroll).PaddingTop=UDim.new(0,8)
+
+invGrid:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	invScroll.CanvasSize = UDim2.new(0,0,0,invGrid.AbsoluteContentSize.Y+16)
+end)
+
+local invCards, invCardsBuilt = {}, {}
+
+local delDimmer, delPopup, delInput, delSubLabel, currentDelPetId
+
+local function buildInvCard(petId)
+	if invCardsBuilt[petId] then return end
+	invCardsBuilt[petId] = true
+
+	local pd = getPetInfo(petId); if not pd then return end
+	local neon = pd.isGolden and C.gold or (PET_RARITY_NEON[pd.rarity] or RARITY_COLOR[pd.rarity] or C.grey)
+	local deep = pd.isGolden and Color3.fromRGB(40, 25, 0) or (PET_RARITY_BG[pd.rarity] or PET_THEME.panelSoft)
+
+	local card = frm(invScroll, {Size=UDim2.new(0,170,0,244), BackgroundColor3=PET_THEME.panelBg, ZIndex=4})
+	corner(card, UDim.new(0,16)); local cardStroke = uistroke(card, neon, 2, 0.15)
+	local cardGrad = Instance.new("UIGradient")
+	cardGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, PET_THEME.panelBg), ColorSequenceKeypoint.new(1, deep)})
+	cardGrad.Rotation = 90; cardGrad.Parent = card
+
+	local countBadge = frm(card, {Size=UDim2.new(0,34,0,22), Position=UDim2.new(1,-40,0,6), BackgroundColor3=Color3.fromRGB(10,8,18), ZIndex=5})
+	corner(countBadge, UDim.new(0,6)); uistroke(countBadge, neon, 1, 0.2)
+	local countLbl = lbl(countBadge, {Size=UDim2.new(1,0,1,0), Text="x1", TextColor3=neon, TextSize=13, Font=Enum.Font.GothamBold, ZIndex=6})
+
+	local petIconFallback = lbl(card, {Size=UDim2.new(1,0,0,74), Position=UDim2.new(0,0,0,5), Text=pd.emoji, TextSize=54, Font=Enum.Font.GothamBold, ZIndex=5})
+	local petIconImg = makeIconLabel(card, {Size=UDim2.new(0.68,0,0,62), Position=UDim2.new(0.16,0,0,10), ZIndex=6, Visible=false})
+	setIcon(petIconImg, "pet_" .. tostring(pd.baseId), petIconFallback, pd.emoji, neon)
+
+	lbl(card, {Size=UDim2.new(1,-8,0,24), Position=UDim2.new(0,4,0,82), Text=pd.name, TextColor3=pd.isGolden and C.gold or Color3.fromRGB(246, 240, 255), TextSize=16, Font=Enum.Font.Bangers, ZIndex=5})
+
+	local baseRarityColor = RARITY_COLOR[pd.rarity] or C.grey
+	if pd.isGolden then
+		local rbadge = frm(card, {Size=UDim2.new(0.38,0,0,20), Position=UDim2.new(0.09,0,0,108), BackgroundColor3=Color3.fromRGB(16, 13, 28), ZIndex=5})
+		corner(rbadge, UDim.new(0,5)); uistroke(rbadge, baseRarityColor, 1, 0.1)
+		lbl(rbadge, {Size=UDim2.new(1,0,1,0), Text=pd.rarity, TextColor3=baseRarityColor, TextSize=10, Font=Enum.Font.GothamBold, ZIndex=6})
+
+		local gbadge = frm(card, {Size=UDim2.new(0.38,0,0,20), Position=UDim2.new(0.53,0,0,108), BackgroundColor3=Color3.fromRGB(30, 24, 0), ZIndex=5})
+		corner(gbadge, UDim.new(0,5)); uistroke(gbadge, C.gold, 1, 0.1)
+		lbl(gbadge, {Size=UDim2.new(1,0,1,0), Text="Golden", TextColor3=C.gold, TextSize=10, Font=Enum.Font.GothamBold, ZIndex=6})
+	else
+		local rbadge = frm(card, {Size=UDim2.new(0.82,0,0,20), Position=UDim2.new(0.09,0,0,108), BackgroundColor3=Color3.fromRGB(16, 13, 28), ZIndex=5})
+		corner(rbadge, UDim.new(0,5)); uistroke(rbadge, neon, 1, 0.1)
+		lbl(rbadge, {Size=UDim2.new(1,0,1,0), Text=pd.rarity, TextColor3=neon, TextSize=10, Font=Enum.Font.GothamBold, ZIndex=6})
+	end
+
+	lbl(card, {Size=UDim2.new(1,0,0,24), Position=UDim2.new(0,0,0,136), Text="x"..fmtPrecise(pd.multiplier).." mult", TextColor3=neon, TextSize=18, Font=Enum.Font.Bangers, ZIndex=5})
+
+	local delBtn = tbtn(card, {Size=UDim2.new(0,24,0,24), Position=UDim2.new(0,6,0,6), BackgroundColor3=Color3.fromRGB(40,15,15), Text="🗑", TextColor3=C.red, TextSize=12, ZIndex=6})
+	corner(delBtn, UDim.new(0,6)); uistroke(delBtn, C.red, 1, 0.3)
+	delBtn.MouseButton1Click:Connect(function()
+		if localData.equippedSkin == petId and (localData.petCounts[petId] or 1) <= 1 then return end
+		if localData.equippedSkin == petId and ((localData.petCounts and localData.petCounts[petId]) or 1) <= 1 then return end
+		currentDelPetId = petId
+		if delInput then delInput.Text = "1" end
+		if pd and delSubLabel then delSubLabel.Text = "How many " .. pd.name .. " would you like to delete?" end
+		if delPopup then delPopup.Visible = true; delPopup.BackgroundTransparency = 0; delDimmer.Visible = true end
+	end)
+
+	local craftBtn = tbtn(card, {Size=UDim2.new(0.86,0,0,30), Position=UDim2.new(0.07,0,0,166), BackgroundColor3=C.gold, Text="CRAFT GOLDEN", TextColor3=Color3.fromRGB(30,20,0), TextSize=14, Font=Enum.Font.Bangers, ZIndex=5, Visible=false})
+	corner(craftBtn, UDim.new(0,6))
+	craftBtn.MouseEnter:Connect(function() tw(craftBtn, FAST, {BackgroundColor3=Color3.fromRGB(255,230,80)}):Play() end)
+	craftBtn.MouseLeave:Connect(function() tw(craftBtn, FAST, {BackgroundColor3=C.gold}):Play() end)
+	craftBtn.MouseButton1Click:Connect(function() RE_craftGolden:FireServer(petId) end)
+
+	local eqBtn = tbtn(card, {Size=UDim2.new(0.86,0,0,34), Position=UDim2.new(0.07,0,0,202), BackgroundColor3=PET_THEME.btnIdle, Text="EQUIP", TextColor3=PET_THEME.btnIdleText, TextSize=15, Font=Enum.Font.GothamBold, ZIndex=5})
+	corner(eqBtn, UDim.new(0,8)); local eqBtnStroke = uistroke(eqBtn, neon, 1, 0.2)
+
+	local function applyEqButtonStyle(isEq, hovered)
+		if isEq then
+			eqBtn.Text = "UNEQUIP"; eqBtn.BackgroundColor3 = hovered and PET_THEME.btnUnequipHover or PET_THEME.btnUnequip
+			eqBtn.TextColor3 = Color3.fromRGB(255, 245, 245); eqBtnStroke.Color = Color3.fromRGB(255, 112, 132); eqBtnStroke.Transparency = 0
+		else
+			eqBtn.Text = "EQUIP"; eqBtn.BackgroundColor3 = hovered and PET_THEME.btnEquipHover or PET_THEME.btnEquip
+			eqBtn.TextColor3 = Color3.fromRGB(30, 18, 0); eqBtnStroke.Color = neon; eqBtnStroke.Transparency = 0.1
+		end
+	end
+
+	applyEqButtonStyle(localData.equippedSkin == petId, false)
+	invCards[petId] = {card=card, eqBtn=eqBtn, eqBtnStroke=eqBtnStroke, cardStroke=cardStroke, rarityColor=neon, eqBtnHovered=false, countLbl=countLbl, craftBtn=craftBtn, pd=pd}
+
+	eqBtn.MouseEnter:Connect(function() invCards[petId].eqBtnHovered = true; applyEqButtonStyle(localData.equippedSkin == petId, true) end)
+	eqBtn.MouseLeave:Connect(function() invCards[petId].eqBtnHovered = false; applyEqButtonStyle(localData.equippedSkin == petId, false) end)
+	eqBtn.MouseButton1Click:Connect(function() local targetSkin = (localData.equippedSkin == petId) and "dog" or petId; localData.equippedSkin = targetSkin; refreshInventory(); RE_equipSkin:FireServer(targetSkin) end)
+end
+
+buildInvCard("dog")
+
+delDimmer = tbtn(screenGui, {Size=UDim2.new(1,0,1,0), BackgroundColor3=Color3.fromRGB(2,2,10), BackgroundTransparency=0.30, Text="", AutoButtonColor=false, ZIndex=65, Visible=false})
+delPopup = frm(screenGui, {Size=UDim2.new(0,340,0,210), Position=UDim2.new(0.5,-170,0.5,-105), BackgroundColor3=C.bg1, BackgroundTransparency=1, Active=true, ZIndex=66, Visible=false})
+corner(delPopup, UDim.new(0,16)); uistroke(delPopup, C.red, 2, 0)
+lbl(delPopup, {Size=UDim2.new(1,0,0,46), Text="DELETE PET", TextColor3=C.red, TextSize=28, Font=Enum.Font.Bangers, ZIndex=67})
+frm(delPopup, {Size=UDim2.new(0.85,0,0,1), Position=UDim2.new(0.075,0,0,46), BackgroundColor3=C.greyDark, ZIndex=67})
+delSubLabel = lbl(delPopup, {Size=UDim2.new(1,0,0,30), Position=UDim2.new(0,0,0,56), Text="How many would you like to delete?", TextColor3=C.white, TextSize=13, Font=Enum.Font.GothamMedium, ZIndex=67})
+
+local delInputBg = frm(delPopup, {Size=UDim2.new(0,140,0,36), Position=UDim2.new(0.5,-70,0,90), BackgroundColor3=Color3.fromRGB(16,14,30), ZIndex=67})
+corner(delInputBg, UDim.new(0,8)); uistroke(delInputBg, C.purple, 1, 0.4)
+delInput = Instance.new("TextBox", delInputBg)
+delInput.Size=UDim2.new(1,0,1,0); delInput.BackgroundTransparency=1; delInput.TextColor3=C.white; delInput.TextSize=18; delInput.Font=Enum.Font.GothamBold; delInput.Text="1"; delInput.ClearTextOnFocus = false; delInput.TextEditable = true
+delInput.ZIndex = 68
+delInput:GetPropertyChangedSignal("Text"):Connect(function() local t = delInput.Text; local f = t:gsub("%D", ""); if f ~= t then delInput.Text = f end end)
+delInput.FocusLost:Connect(function()
+	local amt = tonumber(delInput.Text) or 1
+	local pCount = (localData.petCounts and currentDelPetId) and localData.petCounts[currentDelPetId] or 1
+	amt = math.clamp(amt, 1, math.max(1, pCount))
+	delInput.Text = tostring(amt)
+end)
+
+local delMaxBtn = tbtn(delPopup, {Size=UDim2.new(0,50,0,36), Position=UDim2.new(0.5,80,0,90), BackgroundColor3=Color3.fromRGB(40,30,80), Text="MAX", TextColor3=C.white, TextSize=13, Font=Enum.Font.GothamBold, ZIndex=67})
+corner(delMaxBtn, UDim.new(0,8))
+
+local delConfirmBtn = tbtn(delPopup, {Size=UDim2.new(0.4,0,0,36), Position=UDim2.new(0.06,0,1,-46), BackgroundColor3=Color3.fromRGB(160,35,35), Text="DELETE", TextColor3=C.white, TextSize=16, Font=Enum.Font.Bangers, ZIndex=67})
+corner(delConfirmBtn, UDim.new(0,8))
+
+local delCancelBtn = tbtn(delPopup, {Size=UDim2.new(0.4,0,0,36), Position=UDim2.new(0.54,0,1,-46), BackgroundColor3=C.bg3, Text="Cancel", TextColor3=C.white, TextSize=16, Font=Enum.Font.Bangers, ZIndex=67})
+corner(delCancelBtn, UDim.new(0,8))
+
+delDimmer.MouseButton1Click:Connect(function() delPopup.Visible = false; delDimmer.Visible = false end)
+delMaxBtn.MouseButton1Click:Connect(function()
+	if currentDelPetId then
+		local pCount = (localData.petCounts and localData.petCounts[currentDelPetId]) or 1
+		delInput.Text = tostring(pCount)
+	end
+end)
+
+delCancelBtn.MouseButton1Click:Connect(function() delPopup.Visible = false; delDimmer.Visible = false end)
+
+delConfirmBtn.MouseButton1Click:Connect(function()
+	local amt = tonumber(delInput.Text) or 1
+	local maxAmt = (localData.petCounts and currentDelPetId) and localData.petCounts[currentDelPetId] or 1
+	amt = math.clamp(amt, 1, math.max(1, maxAmt))
+	if amt > 0 and currentDelPetId then RE_deletePet:FireServer(currentDelPetId, amt) end
+	delPopup.Visible = false; delDimmer.Visible = false
+end)
+
+-- ============================================================
+-- ACHIEVEMENTS
+-- ============================================================
+
+local AchUI = { cards = {}, toastQueue = {}, toastShowing = false }
+local DailyUI = { blocks = {}, anchorTick = 0, anchorSecs = 0, is24hPhase = false, sessionAnchorTick = 0, sessionAnchorSecs = 0 }
+
+do
+	local S_ACH = makeScreen(4, Color3.fromRGB(6,5,16))
+	makeStars(S_ACH, 60, Color3.fromRGB(255,220,120), 4, 8)
+
+	local achHeader = frm(S_ACH, {Size=UDim2.new(1,0,0,headerH), BackgroundColor3=Color3.fromRGB(12,9,24), ZIndex=3})
+	frm(achHeader, {Size=UDim2.new(1,0,0,2), Position=UDim2.new(0,0,1,-2), BackgroundColor3=C.gold, ZIndex=4})
+	lbl(achHeader, {Size=UDim2.new(0.6,0,1,0), Position=UDim2.new(0.20,0,0,0), Text="🏆  ACHIEVEMENTS", TextColor3=C.gold, TextSize=28, Font=Enum.Font.Bangers, TextXAlignment=Enum.TextXAlignment.Center, ZIndex=4})
+	AchUI.countLabel = lbl(achHeader, {Size=UDim2.new(0.3,0,1,0), Position=UDim2.new(0.68,0,0,0), Text="0 / 17", TextColor3=C.grey, TextSize=14, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Right, ZIndex=4})
+
+	local boostPanel = frm(S_ACH, {Size=UDim2.new(1,-24,0,44), Position=UDim2.new(0,12,0,headerH+8), BackgroundColor3=Color3.fromRGB(14,10,28), ZIndex=3})
+	corner(boostPanel, UDim.new(0,10)); uistroke(boostPanel, C.gold, 1, 0.5)
+	lbl(boostPanel, {Size=UDim2.new(0.2,0,1,0), Position=UDim2.new(0,8,0,0), Text="⚡ Boosts:", TextColor3=C.goldDim, TextSize=11, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=4})
+	AchUI.boostCPC = lbl(boostPanel, {Size=UDim2.new(0.2,0,1,0), Position=UDim2.new(0.19,0,0,0), Text="📳 CPC +0%", TextColor3=Color3.fromRGB(100,220,255), TextSize=11, Font=Enum.Font.GothamBold, ZIndex=4})
+	AchUI.boostCPS = lbl(boostPanel, {Size=UDim2.new(0.2,0,1,0), Position=UDim2.new(0.39,0,0,0), Text="⚙️ CPS +0%", TextColor3=Color3.fromRGB(100,255,160), TextSize=11, Font=Enum.Font.GothamBold, ZIndex=4})
+	AchUI.boostAll = lbl(boostPanel, {Size=UDim2.new(0.2,0,1,0), Position=UDim2.new(0.59,0,0,0), Text="🌀 All +0%", TextColor3=Color3.fromRGB(255,180,80), TextSize=11, Font=Enum.Font.GothamBold, ZIndex=4})
+	AchUI.boostSP = lbl(boostPanel, {Size=UDim2.new(0.2,0,1,0), Position=UDim2.new(0.79,0,0,0), Text="⭐ SP +0%", TextColor3=C.gold, TextSize=11, Font=Enum.Font.GothamBold, ZIndex=4})
+
+	local achScroll = Instance.new("ScrollingFrame")
+	achScroll.Size = UDim2.new(1,-24,1,-headerH-NAV_H-62); achScroll.Position = UDim2.new(0,12,0,headerH+60)
+	achScroll.BackgroundTransparency = 1; achScroll.ScrollBarThickness = 5; achScroll.ScrollBarImageColor3 = C.gold
+	achScroll.BorderSizePixel = 0; achScroll.ZIndex = 3; achScroll.Parent = S_ACH
+	local achLayout = Instance.new("UIListLayout", achScroll); achLayout.Padding = UDim.new(0,6)
+	Instance.new("UIPadding", achScroll).PaddingTop = UDim.new(0,4)
+	achLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() achScroll.CanvasSize = UDim2.new(0,0,0,achLayout.AbsoluteContentSize.Y+16) end)
+
+	for _, ach in ipairs(ACHIEVEMENT_DISPLAY) do
+		local row = frm(achScroll, {Size=UDim2.new(1,-4,0,96), BackgroundColor3=Color3.fromRGB(16,12,32), ZIndex=4})
+		corner(row, UDim.new(0,14)); local rowStroke = uistroke(row, Color3.fromRGB(50,40,80), 1, 0.2)
+		local stripe = frm(row, {Size=UDim2.new(0,4,0.7,0), Position=UDim2.new(0,0,0.15,0), BackgroundColor3=C.greyDark, ZIndex=5}); corner(stripe, UDim.new(1,0))
+		local iconL = lbl(row, {Size=UDim2.new(0,42,1,0), Position=UDim2.new(0,8,0,0), Text=ach.icon, TextSize=26, Font=Enum.Font.GothamBold, TextTransparency=0.5, ZIndex=5})
+		local iconImg = makeIconLabel(row, {Size=UDim2.new(0,28,0,28), Position=UDim2.new(0,15,0.5,-14), ZIndex=6, Visible=false})
+		setIcon(iconImg, "ach_" .. tostring(ach.id), iconL, ach.icon, C.grey)
+		local nameL = lbl(row, {Size=UDim2.new(0.48,0,0,22), Position=UDim2.new(0,52,0,8), Text=ach.name, TextColor3=C.grey, TextSize=14, Font=Enum.Font.Bangers, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5})
+		lbl(row, {Size=UDim2.new(0.48,0,0,16), Position=UDim2.new(0,52,0,30), Text=ach.desc, TextColor3=Color3.fromRGB(80,72,110), TextSize=10, Font=Enum.Font.GothamMedium, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5})
+		local progressBg = frm(row, {Size=UDim2.new(0.52,0,0,8), Position=UDim2.new(0,52,0,52), BackgroundColor3=Color3.fromRGB(30,24,50), ZIndex=5}); corner(progressBg, UDim.new(1,0))
+		local progressFill = frm(progressBg, {Size=UDim2.new(0,1,1,0), BackgroundColor3=Color3.fromRGB(60,140,255), ZIndex=6}); corner(progressFill, UDim.new(1,0))
+		local progressText = lbl(row, {Size=UDim2.new(0.52,0,0,14), Position=UDim2.new(0,52,0,62), Text="", TextColor3=Color3.fromRGB(80,72,110), TextSize=9, Font=Enum.Font.GothamMedium, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5})
+		local rewardBadge = frm(row, {Size=UDim2.new(0,106,0,22), Position=UDim2.new(1,-112,0,8), BackgroundColor3=Color3.fromRGB(28,20,8), ZIndex=5}); corner(rewardBadge, UDim.new(0,8)); uistroke(rewardBadge, Color3.fromRGB(70,54,10), 1, 0.4)
+		lbl(rewardBadge, {Size=UDim2.new(1,0,1,0), Text="⭐ "..ach.reward, TextColor3=C.goldDim, TextSize=11, Font=Enum.Font.GothamBold, ZIndex=6})
+		local claimBtn = tbtn(row, {Size=UDim2.new(0,106,0,28), Position=UDim2.new(1,-112,0,58), BackgroundColor3=C.gold, Text="✔ CLAIM!", TextColor3=Color3.fromRGB(16,10,0), TextSize=14, Font=Enum.Font.Bangers, ZIndex=5, Visible=false})
+		corner(claimBtn, UDim.new(0,8))
+		local claimedBadge = frm(row, {Size=UDim2.new(0,106,0,28), Position=UDim2.new(1,-112,0,58), BackgroundColor3=Color3.fromRGB(10,40,20), ZIndex=5, Visible=false})
+		corner(claimedBadge, UDim.new(0,8)); uistroke(claimedBadge, C.green, 1, 0.3)
+		lbl(claimedBadge, {Size=UDim2.new(1,0,1,0), Text="✅ Claimed", TextColor3=C.green, TextSize=12, Font=Enum.Font.GothamBold, ZIndex=6})
+		AchUI.cards[ach.id] = {row=row, rowStroke=rowStroke, stripe=stripe, iconL=iconL, iconImg=iconImg, nameL=nameL, progressFill=progressFill, progressText=progressText, claimBtn=claimBtn, claimedBadge=claimedBadge}
+		local achId = ach.id
+		claimBtn.MouseButton1Click:Connect(function() if RE_claimAchieve then RE_claimAchieve:FireServer(achId); claimBtn.Visible = false; claimedBadge.Visible = true end end)
+		claimBtn.MouseEnter:Connect(function() tw(claimBtn, FAST, {BackgroundColor3=Color3.fromRGB(255,210,0)}):Play() end)
+		claimBtn.MouseLeave:Connect(function() tw(claimBtn, FAST, {BackgroundColor3=C.gold}):Play() end)
+	end
+
+	AchUI.showNextToast = function()
+		if #AchUI.toastQueue == 0 then AchUI.toastShowing=false return end
+		AchUI.toastShowing = true
+		local ach = table.remove(AchUI.toastQueue, 1)
+		local toast = frm(screenGui, {Size=UDim2.new(0,340,0,64), Position=UDim2.new(0.5,-170,-0.12,0), BackgroundColor3=Color3.fromRGB(20,16,38), ZIndex=80})
+		corner(toast, UDim.new(0,14)); uistroke(toast, C.gold, 2, 0)
+		frm(toast, {Size=UDim2.new(0,4,1,-8), Position=UDim2.new(0,0,0,4), BackgroundColor3=C.gold, ZIndex=81})
+		local toastIcon = lbl(toast, {Size=UDim2.new(0,44,1,0), Position=UDim2.new(0,8,0,0), Text=ach.icon, TextSize=26, Font=Enum.Font.GothamBold, ZIndex=81})
+		local toastIconImg = makeIconLabel(toast, {Size=UDim2.new(0,28,0,28), Position=UDim2.new(0,16,0.5,-14), ZIndex=82, Visible=false})
+		setIcon(toastIconImg, "ach_" .. tostring(ach.id), toastIcon, ach.icon, C.gold)
+		lbl(toast, {Size=UDim2.new(0.72,0,0,22), Position=UDim2.new(0,52,0,6), Text="Achievement unlocked! → go to ACHIEVEMENTS to claim", TextColor3=C.gold, TextSize=10, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=81})
+		lbl(toast, {Size=UDim2.new(0.72,0,0,22), Position=UDim2.new(0,52,0,28), Text=ach.name.."  ("..ach.reward..")", TextColor3=C.white, TextSize=13, Font=Enum.Font.Bangers, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=81})
+		tw(toast, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position=UDim2.new(0.5,-170,0,14)}):Play()
+		task.delay(3.5, function()
+			tw(toast, MED, {Position=UDim2.new(0.5,-170,-0.15,0)}):Play()
+			task.delay(0.3, function() toast:Destroy(); task.delay(0.15, AchUI.showNextToast) end)
+		end)
+	end
+end
+
+-- ============================================================
+-- DAILY REWARDS MODAL
+-- ============================================================
+
+local DAILY_REWARD_DISPLAY = {
+	{ emoji="🎁", label="200K Clicks"  }, { emoji="💰", label="5M Clicks"    }, { emoji="💫", label="36M Clicks"   },
+	{ emoji="💎", label="300M Clicks"  }, { emoji="✨", label="3B Clicks"    }, { emoji="🌟", label="30B Clicks"   },
+	{ emoji="👑", label="300B Clicks"  },
+}
+
+do
+	DailyUI.modal = tbtn(screenGui, {Size=UDim2.new(1,0,1,0), BackgroundColor3=Color3.fromRGB(0,0,0), BackgroundTransparency=0.42, Text="", ZIndex=74, Visible=false, AutoButtonColor=false})
+	local CARD_W, HEADER_H, BLOCK_H, FOOTER_H = 400, 56, 58, 58
+	local CARD_H = HEADER_H + 7 * BLOCK_H + FOOTER_H + 10
+	local dailyCard = frm(DailyUI.modal, {Size=UDim2.new(0,CARD_W,0,CARD_H), Position=UDim2.new(0.5,-CARD_W/2,0.5,-CARD_H/2), BackgroundColor3=Color3.fromRGB(10,8,24), ZIndex=75})
+	corner(dailyCard, UDim.new(0,20)); uistroke(dailyCard, C.cyan, 3, 0)
+
+	lbl(dailyCard, {Size=UDim2.new(1,0,0,HEADER_H-6), Position=UDim2.new(0,0,0,5), Text="📅  DAILY REWARDS", TextColor3=C.cyan, TextSize=34, Font=Enum.Font.Bangers, ZIndex=76})
+	lbl(dailyCard, {Size=UDim2.new(1,0,0,14), Position=UDim2.new(0,0,0,HEADER_H-8), Text="Play 60 min to unlock each day's reward  •  +24h between days", TextColor3=C.grey, TextSize=11, Font=Enum.Font.GothamMedium, ZIndex=76})
+
+	for d = 1, 7 do
+		local rwd = DAILY_REWARD_DISPLAY[d]
+		local block = frm(dailyCard, {Size=UDim2.new(1,-20,0,BLOCK_H-6), Position=UDim2.new(0,10,0,HEADER_H+14+(d-1)*BLOCK_H), BackgroundColor3=Color3.fromRGB(16,12,32), ZIndex=76})
+		corner(block, UDim.new(0,12)); local blockStroke = uistroke(block, C.greyDark, 1, 0.35)
+
+		local dayBadge = frm(block, {Size=UDim2.new(0,42,0,42), Position=UDim2.new(0,6,0.5,-21), BackgroundColor3=Color3.fromRGB(30,24,55), ZIndex=77})
+		corner(dayBadge, UDim.new(0,10)); uistroke(dayBadge, C.greyDark, 1, 0.3)
+		local dayWordLbl = lbl(dayBadge, {Size=UDim2.new(1,0,0,16), Position=UDim2.new(0,0,0,3), Text="DAY", TextColor3=C.white, TextSize=9, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Center, TextYAlignment=Enum.TextYAlignment.Center, ZIndex=78})
+		local dayNumLbl = lbl(dayBadge, {Size=UDim2.new(1,0,0,13), Position=UDim2.new(0,0,0,20), Text=tostring(d), TextColor3=C.white, TextSize=14, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Center, TextYAlignment=Enum.TextYAlignment.Center, ZIndex=78})
+		local emojiLbl = lbl(block, {Size=UDim2.new(0,34,1,0), Position=UDim2.new(0,52,0,0), Text="🎁", TextSize=22, Font=Enum.Font.GothamBold, ZIndex=77})
+		lbl(block, {Size=UDim2.new(0,140,1,0), Position=UDim2.new(0,88,0,0), Text=rwd.label, TextColor3=C.gold, TextSize=16, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=77})
+
+		local claimBtn = tbtn(block, {Size=UDim2.new(0,90,0,36), Position=UDim2.new(1,-98,0.5,-18), BackgroundColor3=C.gold, Text="CLAIM!", TextColor3=Color3.fromRGB(16,10,0), TextSize=17, Font=Enum.Font.Bangers, Visible=false, ZIndex=77, AutoButtonColor=false})
+		corner(claimBtn, UDim.new(0,10))
+		local countdownLabel = lbl(block, {Size=UDim2.new(0,110,1,0), Position=UDim2.new(1,-114,0,0), Text="⏱ 60:00", TextColor3=C.cyan, TextSize=16, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Center, Visible=false, ZIndex=77})
+		local statusLabel = lbl(block, {Size=UDim2.new(0,100,1,0), Position=UDim2.new(1,-104,0,0), Text="🔒", TextColor3=C.grey, TextSize=14, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Center, ZIndex=77})
+		local claimedBadge = frm(block, {Size=UDim2.new(0,90,0,34), Position=UDim2.new(1,-98,0.5,-17), BackgroundColor3=Color3.fromRGB(10,40,20), Visible=false, ZIndex=77})
+		corner(claimedBadge, UDim.new(0,8)); uistroke(claimedBadge, C.green, 1, 0.3)
+		lbl(claimedBadge, {Size=UDim2.new(1,0,1,0), Text="✓ Claimed", TextColor3=C.green, TextSize=13, Font=Enum.Font.GothamBold, ZIndex=78})
+
+		DailyUI.blocks[d] = {block=block, blockStroke=blockStroke, claimBtn=claimBtn, countdownLabel=countdownLabel, statusLabel=statusLabel, claimedBadge=claimedBadge, dayWordLbl=dayWordLbl, dayNumLbl=dayNumLbl, emojiLbl=emojiLbl}
+
+		claimBtn.MouseButton1Click:Connect(function() if RE_claimDaily then RE_claimDaily:FireServer() end end)
+		claimBtn.MouseEnter:Connect(function() tw(claimBtn, FAST, {BackgroundColor3=Color3.fromRGB(255,228,40)}):Play() end)
+		claimBtn.MouseLeave:Connect(function() tw(claimBtn, FAST, {BackgroundColor3=C.gold}):Play() end)
+	end
+
+	local dailyCloseBtnNew = tbtn(dailyCard, {Size=UDim2.new(0.55,0,0,42), Position=UDim2.new(0.225,0,1,-52), BackgroundColor3=Color3.fromRGB(90,30,160), Text="CLOSE", TextColor3=C.white, TextSize=20, Font=Enum.Font.Bangers, ZIndex=76, AutoButtonColor=false})
+	corner(dailyCloseBtnNew, UDim.new(0,12))
+	dailyCloseBtnNew.MouseButton1Click:Connect(function() DailyUI.modal.Visible = false end)
+	dailyCloseBtnNew.MouseEnter:Connect(function() tw(dailyCloseBtnNew, FAST, {BackgroundColor3=Color3.fromRGB(60,18,110)}):Play() end)
+	dailyCloseBtnNew.MouseLeave:Connect(function() tw(dailyCloseBtnNew, FAST, {BackgroundColor3=Color3.fromRGB(90,30,160)}):Play() end)
+
+	DailyUI.modal.MouseButton1Click:Connect(function() DailyUI.modal.Visible = false end)
+	dailyCard.InputBegan:Connect(function(input) end)
+end
+
+DailyUI.refreshModal = function()
+	local currentDay = localData.dailyRewardDay or 1
+	local now = tick()
+	local secsLeft = 0
+	if DailyUI.is24hPhase then
+		local cdLeft = math.max(0, math.floor(DailyUI.anchorSecs - (now - DailyUI.anchorTick)))
+		if cdLeft > 0 then secsLeft = cdLeft
+		else
+			local cdExpiredAt = DailyUI.anchorTick + DailyUI.anchorSecs
+			local sessionElapsed = math.max(0, now - cdExpiredAt)
+			secsLeft = math.max(0, math.floor(DailyUI.sessionAnchorSecs - sessionElapsed))
+		end
+	else
+		secsLeft = math.max(0, math.floor(DailyUI.sessionAnchorSecs - (now - DailyUI.sessionAnchorTick)))
+	end
+	local claimable = (secsLeft == 0)
+
+	for d = 1, 7 do
+		local ui = DailyUI.blocks[d]; if not ui then continue end
+		ui.claimBtn.Visible = false; ui.countdownLabel.Visible = false; ui.statusLabel.Visible = false; ui.claimedBadge.Visible = false
+
+		if d < currentDay then
+			ui.claimedBadge.Visible = true; ui.block.BackgroundColor3 = Color3.fromRGB(10,26,14); ui.blockStroke.Color = C.green; ui.blockStroke.Transparency = 0.3
+			if ui.dayWordLbl then ui.dayWordLbl.TextColor3 = C.grey end; if ui.dayNumLbl then ui.dayNumLbl.TextColor3 = C.grey end
+			if ui.emojiLbl then ui.emojiLbl.Text = "🎊" end
+		elseif d == currentDay then
+			ui.block.BackgroundColor3 = Color3.fromRGB(22,17,42); ui.blockStroke.Color = C.gold; ui.blockStroke.Transparency = 0
+			if ui.dayWordLbl then ui.dayWordLbl.TextColor3 = C.white end; if ui.dayNumLbl then ui.dayNumLbl.TextColor3 = C.white end
+			if ui.emojiLbl then ui.emojiLbl.Text = "🎁" end
+			if claimable then ui.claimBtn.Visible = true else
+				ui.countdownLabel.Visible = true
+				local h = math.floor(secsLeft / 3600); local m = math.floor((secsLeft % 3600) / 60); local s = secsLeft % 60
+				ui.countdownLabel.Text = h > 0 and string.format("%d:%02d:%02d", h, m, s) or string.format("%02d:%02d", m, s)
+			end
+		else
+			ui.statusLabel.Visible = true; ui.statusLabel.Text = "🔒 Day " .. d; ui.block.BackgroundColor3 = Color3.fromRGB(14,12,28)
+			ui.blockStroke.Color = C.greyDark; ui.blockStroke.Transparency = 0.45
+			if ui.dayWordLbl then ui.dayWordLbl.TextColor3 = C.white end; if ui.dayNumLbl then ui.dayNumLbl.TextColor3 = C.white end
+			if ui.emojiLbl then ui.emojiLbl.Text = "🎁" end
+		end
+	end
+	if DailyUI.notifBadge then DailyUI.notifBadge.Visible = claimable end
+end
+
+task.spawn(function()
+	while true do task.wait(1); if DailyUI.refreshModal then DailyUI.refreshModal() end end
+end)
+
+do
+	local dailyFloatBtn = tbtn(S_MAIN, {Size=UDim2.new(0,112,0,56), Position=UDim2.new(1,-324, 0, 8), BackgroundColor3=C.bg2, Text="", ZIndex=6, Visible=true, AutoButtonColor=false})
+	corner(dailyFloatBtn, UDim.new(0,14)); local s = Instance.new("UIStroke"); s.Color = C.cyan; s.Thickness = 1.5; s.Transparency = 0.2; s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; s.Parent = dailyFloatBtn
+	lbl(dailyFloatBtn, {Size=UDim2.new(1,0,0,16), Position=UDim2.new(0,0,0,11), Text="📅 DAILY", TextColor3=C.cyan, TextSize=16, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Center, ZIndex=7})
+	lbl(dailyFloatBtn, {Size=UDim2.new(1,0,0,16), Position=UDim2.new(0,0,0,29), Text="REWARDS", TextColor3=C.cyan, TextSize=16, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Center, ZIndex=7})
+	DailyUI.notifBadge = frm(dailyFloatBtn, {Size=UDim2.new(0,14,0,14), Position=UDim2.new(1,-5,0,-5), BackgroundColor3=C.red, ZIndex=8, Visible=false})
+	corner(DailyUI.notifBadge, UDim.new(1,0)); pulse(DailyUI.notifBadge, "BackgroundTransparency", 0, 0.5, 0.8)
+
+	dailyFloatBtn.MouseButton1Click:Connect(function() DailyUI.refreshModal(); DailyUI.modal.Visible = true end)
+	dailyFloatBtn.MouseEnter:Connect(function() tw(dailyFloatBtn, FAST, {BackgroundColor3=Color3.fromRGB(40,32,70)}):Play() end)
+	dailyFloatBtn.MouseLeave:Connect(function() tw(dailyFloatBtn, FAST, {BackgroundColor3=C.bg2}):Play() end)
+end
+
+-- ============================================================
+-- UPGRADE BUTTONS
+-- ============================================================
+
+local upgradeBtns = {}
+
+for _, upg in ipairs(UPGRADE_DISPLAY) do
+	local f = frm(upgradeScroll, {Size=UDim2.new(1,-6,0,82), BackgroundColor3=C.bg2, ZIndex=4})
+	corner(f, UDim.new(0,12)); uistroke(f, C.greyDark, 1, 0.3)
+
+	local upgIconFallback = lbl(f, {Size=UDim2.new(0,28,0,28), Position=UDim2.new(0,4,0,4), Text=upg.icon, TextSize=20, Font=Enum.Font.GothamBold, ZIndex=5})
+	local upgIconImage = makeIconLabel(f, {Size=UDim2.new(0,22,0,22), Position=UDim2.new(0,7,0,7), ZIndex=6, Visible=false})
+	setIcon(upgIconImage, "upgrade_" .. tostring(upg.id), upgIconFallback, upg.icon, C.white)
+	lbl(f, {Size=UDim2.new(0.7,0,0,26), Position=UDim2.new(0,32,0,4), Text=upg.name, TextColor3=C.white, TextSize=14, Font=Enum.Font.Bangers, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5})
+
+	local lvBadge = frm(f, {Size=UDim2.new(0,48,0,22), Position=UDim2.new(1,-52,0,5), BackgroundColor3=C.bg0, ZIndex=5})
+	corner(lvBadge, UDim.new(0,8)); uistroke(lvBadge, C.purple, 1, 0.4)
+	local lvLabel = lbl(lvBadge, {Size=UDim2.new(1,0,1,0), Text="Lv.0", TextColor3=C.purple, TextSize=12, Font=Enum.Font.GothamBold, ZIndex=6})
+
+	lbl(f, {Size=UDim2.new(1,-10,0,18), Position=UDim2.new(0,5,0,32), Text=upg.desc, TextColor3=C.grey, TextSize=12, Font=Enum.Font.GothamMedium, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5})
+
+	local buyBtn = tbtn(f, {Size=UDim2.new(0.94,0,0,26), Position=UDim2.new(0.03,0,0,52), BackgroundColor3=C.gold, Text="Buy — "..fmt(getUpgradeCost(upg)).." Clicks", TextColor3=Color3.fromRGB(0,0,0), TextSize=13, Font=Enum.Font.GothamBold, ZIndex=5})
+	corner(buyBtn, UDim.new(0,8))
+
+	upgradeBtns[upg.id] = {buyBtn=buyBtn, lvLabel=lvLabel, upg=upg, hovered=false}
+
+	buyBtn.MouseEnter:Connect(function()
+		upgradeBtns[upg.id].hovered = true
+		if displayedClicks >= getUpgradeCost(upg) then tw(buyBtn, FAST, {BackgroundColor3=Color3.fromRGB(210,165,0)}):Play() end
+	end)
+	buyBtn.MouseLeave:Connect(function()
+		upgradeBtns[upg.id].hovered = false
+		if displayedClicks >= getUpgradeCost(upg) then tw(buyBtn, FAST, {BackgroundColor3=C.gold}):Play() end
+	end)
+	buyBtn.MouseButton1Click:Connect(function()
+		local cost = getUpgradeCost(upg)
+		if displayedClicks < cost then return end
+		RE_buyUpgrade:FireServer(upg.id)
+		displayedClicks -= cost
+		localData.upgrades[upg.id] = (localData.upgrades[upg.id] or 0) + 1
+		local newLv = localData.upgrades[upg.id]; local newCost = getUpgradeCost(upg); local ui = upgradeBtns[upg.id]
+		ui.lvLabel.Text = "Lv." .. newLv
+		if newLv >= upg.maxLevel then
+			ui.buyBtn.Text = "MAX ✓"; ui.buyBtn.BackgroundColor3 = C.greyDark; ui.buyBtn.TextColor3 = C.grey
+		else
+			ui.buyBtn.Text = "Buy — " .. fmt(newCost) .. " Clicks"
+			local canAfford = displayedClicks >= newCost
+			ui.buyBtn.BackgroundColor3 = canAfford and C.gold or Color3.fromRGB(70,55,10)
+			ui.buyBtn.TextColor3 = canAfford and Color3.fromRGB(0,0,0) or C.grey
+		end
+	end)
+end
+
+upgradeScroll.CanvasSize = UDim2.new(0,0,0,#UPGRADE_DISPLAY*88)
+
+local spUpgradeBtns = {}
+
+for _, upg in ipairs(SP_UPGRADE_DISPLAY) do
+	local f = frm(spUpgradeScroll, {Size=UDim2.new(1,-6,0,84), BackgroundColor3=Color3.fromRGB(22,18,45), ZIndex=4})
+	corner(f, UDim.new(0,12)); uistroke(f, Color3.fromRGB(80,60,20), 1, 0.3)
+	frm(f, {Size=UDim2.new(0,3,1,-8), Position=UDim2.new(0,0,0,4), BackgroundColor3=C.gold, ZIndex=5})
+
+	local spIconFallback = lbl(f, {Size=UDim2.new(0,28,0,28), Position=UDim2.new(0,8,0,4), Text=upg.icon, TextSize=20, Font=Enum.Font.GothamBold, ZIndex=5})
+	local spIconImage = makeIconLabel(f, {Size=UDim2.new(0,22,0,22), Position=UDim2.new(0,11,0,7), ZIndex=6, Visible=false})
+	setIcon(spIconImage, "sp_" .. tostring(upg.id), spIconFallback, upg.icon, C.gold)
+	lbl(f, {Size=UDim2.new(0.65,0,0,24), Position=UDim2.new(0,36,0,4), Text=upg.name, TextColor3=C.gold, TextSize=14, Font=Enum.Font.Bangers, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5})
+
+	local spLvBadge = frm(f, {Size=UDim2.new(0,52,0,22), Position=UDim2.new(1,-56,0,5), BackgroundColor3=C.bg0, ZIndex=5})
+	corner(spLvBadge, UDim.new(0,8)); uistroke(spLvBadge, C.gold, 1, 0.4)
+	local spLvLabel = lbl(spLvBadge, {Size=UDim2.new(1,0,1,0), Text="0/"..upg.maxLevel, TextColor3=C.gold, TextSize=11, Font=Enum.Font.GothamBold, ZIndex=6})
+
+	lbl(f, {Size=UDim2.new(1,-12,0,18), Position=UDim2.new(0,8,0,32), Text=upg.desc, TextColor3=C.grey, TextSize=12, Font=Enum.Font.GothamMedium, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5})
+
+	local spBuyBtn = tbtn(f, {Size=UDim2.new(0.94,0,0,26), Position=UDim2.new(0.03,0,0,52), BackgroundColor3=Color3.fromRGB(50,40,10), Text="⭐ " .. (upg.costs[1] or "?") .. " SP", TextColor3=C.grey, TextSize=13, Font=Enum.Font.GothamBold, ZIndex=5})
+	corner(spBuyBtn, UDim.new(0,8))
+
+	spUpgradeBtns[upg.id] = {buyBtn=spBuyBtn, lvLabel=spLvLabel, upg=upg, hovered=false}
+
+	spBuyBtn.MouseEnter:Connect(function()
+		spUpgradeBtns[upg.id].hovered = true
+		local sp = localData.starPoints or 0; local cost = getSPUpgradeCost(upg); local lv = localData.spUpgrades[upg.id] or 0
+		if lv < upg.maxLevel and sp >= cost then tw(spBuyBtn, FAST, {BackgroundColor3=Color3.fromRGB(210,165,0)}):Play() end
+	end)
+	spBuyBtn.MouseLeave:Connect(function()
+		spUpgradeBtns[upg.id].hovered = false
+		local sp = localData.starPoints or 0; local cost = getSPUpgradeCost(upg); local lv = localData.spUpgrades[upg.id] or 0
+		if lv >= upg.maxLevel then return end
+		if sp >= cost then tw(spBuyBtn, FAST, {BackgroundColor3=C.gold}):Play() end
+	end)
+	spBuyBtn.MouseButton1Click:Connect(function()
+		local cost = getSPUpgradeCost(upg); local sp = localData.starPoints or 0
+		if sp < cost then return end
+		RE_buySPUpgrade:FireServer(upg.id)
+		localData.starPoints = sp - cost; localData.spUpgrades[upg.id] = (localData.spUpgrades[upg.id] or 0) + 1
+		local newLv = localData.spUpgrades[upg.id]; local newCost = getSPUpgradeCost(upg); local ui = spUpgradeBtns[upg.id]
+		ui.lvLabel.Text = newLv .. "/" .. upg.maxLevel
+		if newLv >= upg.maxLevel then
+			ui.buyBtn.Text = "MAX ✓"; ui.buyBtn.BackgroundColor3 = Color3.fromRGB(80,60,10); ui.buyBtn.TextColor3 = C.grey
+		else
+			ui.buyBtn.Text = "⭐ " .. newCost .. " SP"; local canAffordNew = localData.starPoints >= newCost
+			ui.buyBtn.BackgroundColor3 = canAffordNew and C.gold or Color3.fromRGB(50,40,10); ui.buyBtn.TextColor3 = canAffordNew and Color3.fromRGB(20,14,0) or C.grey
+		end
+		spBalanceLabel.Text = tostring(localData.starPoints)
+	end)
+end
+
+spUpgradeScroll.CanvasSize = UDim2.new(0,0,0,#SP_UPGRADE_DISPLAY*96)
+
+-- ============================================================
+-- ROLL ANIMATION OVERLAY  (budowane w całości wewnątrz initRollAnimation)
+-- ============================================================
+
+-- ============================================================
+-- PRESTIGE CONFIRM POPUP
+-- ============================================================
+
+local presDimmer = tbtn(screenGui, {Size=UDim2.new(1,0,1,0), BackgroundColor3=Color3.fromRGB(2,2,10), BackgroundTransparency=0.20, Text="", AutoButtonColor=false, ZIndex=59, Visible=false})
+
+local presPopup = frm(screenGui, {Size=UDim2.new(0,420,0,280), Position=UDim2.new(0.5,-210,0.5,-140), BackgroundColor3=C.bg1, BackgroundTransparency=1, ZIndex=60, Visible=false})
+corner(presPopup, UDim.new(0,20)); uistroke(presPopup, C.purple, 3, 0)
+
+lbl(presPopup, {Size=UDim2.new(1,0,0,52), Text="ARE YOU SURE?", TextColor3=C.red, TextSize=34, Font=Enum.Font.Bangers, ZIndex=61})
+frm(presPopup, {Size=UDim2.new(0.85,0,0,1), Position=UDim2.new(0.075,0,0,52), BackgroundColor3=C.greyDark, ZIndex=61})
+
+local presPopupInfo = lbl(presPopup, {Size=UDim2.new(0.92,0,0,140), Position=UDim2.new(0.04,0,0,60), Text="", TextColor3=Color3.fromRGB(210,205,255), TextSize=14, Font=Enum.Font.GothamMedium, TextWrapped=true, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=61})
+
+local presConfirmBtn = tbtn(presPopup, {Size=UDim2.new(0.43,0,0,44), Position=UDim2.new(0.04,0,1,-52), BackgroundColor3=C.purpleDim, Text="PRESTIGE!", TextColor3=C.white, TextSize=20, Font=Enum.Font.Bangers, ZIndex=61})
+corner(presConfirmBtn, UDim.new(0,12))
+presConfirmBtn.MouseEnter:Connect(function() tw(presConfirmBtn, FAST, {BackgroundColor3=Color3.fromRGB(85,25,155)}):Play() end)
+presConfirmBtn.MouseLeave:Connect(function() tw(presConfirmBtn, FAST, {BackgroundColor3=C.purpleDim}):Play() end)
+
+local presCancelBtn = tbtn(presPopup, {Size=UDim2.new(0.43,0,0,44), Position=UDim2.new(0.53,0,1,-52), BackgroundColor3=Color3.fromRGB(160,35,35), Text="Cancel", TextColor3=C.white, TextSize=20, Font=Enum.Font.Bangers, ZIndex=61})
+corner(presCancelBtn, UDim.new(0,12))
+presCancelBtn.MouseEnter:Connect(function() tw(presCancelBtn, FAST, {BackgroundColor3=Color3.fromRGB(125,22,22)}):Play() end)
+presCancelBtn.MouseLeave:Connect(function() tw(presCancelBtn, FAST, {BackgroundColor3=Color3.fromRGB(160,35,35)}):Play() end)
+
+-- ============================================================
+-- NAVIGATION LOGIC
+-- ============================================================
+
+local currentScreen = 0
+local transitioning = false
+
+local SCREEN_POS = {
+	[0]=UDim2.new( 0,0,0,0), [1]=UDim2.new(-1,0,0,0), [2]=UDim2.new(-2,0,0,0), [3]=UDim2.new(-3,0,0,0), [4]=UDim2.new(-4,0,0,0),
+}
+
+local function setNavActive(idx)
+	for i, b in ipairs(navBtns) do
+		local isActive = (NAV_TABS[i].screen == idx)
+		local col = isActive and Color3.fromRGB(255, 232, 170) or C.grey
+		tw(navIndicators[i], MED, {BackgroundTransparency = isActive and 0 or 1}):Play()
+		if navLabels[i] then
+			tw(navLabels[i].icon, MED, {TextColor3=col}):Play()
+			if navLabels[i].iconImg then tw(navLabels[i].iconImg, MED, {ImageColor3=col}):Play() end
+			tw(navLabels[i].text, MED, {TextColor3=col}):Play()
+		end
+		if isActive then b.BackgroundTransparency = 0; b.BackgroundColor3 = Color3.fromRGB(40, 28, 85)
+		else b.BackgroundTransparency = 1; b.BackgroundColor3 = Color3.fromRGB(40, 28, 85) end
+	end
+end
+
+for i, tab in ipairs(NAV_TABS) do
+	local b = navBtns[i]
+	b.MouseEnter:Connect(function()
+		if tab.screen ~= currentScreen then b.BackgroundColor3 = Color3.fromRGB(40, 28, 85); b.BackgroundTransparency = 0 end
+	end)
+	b.MouseLeave:Connect(function()
+		if tab.screen ~= currentScreen then b.BackgroundTransparency = 1 end
+	end)
+end
+
+local function goTo(idx)
+	if transitioning or idx==currentScreen then return end
+	transitioning = true; currentScreen = idx
+	tw(CONTAINER, SLIDE, {Position=SCREEN_POS[idx]}):Play()
+	setNavActive(idx)
+	task.delay(0.56, function() transitioning=false end)
+end
+
+for i, tab in ipairs(NAV_TABS) do navBtns[i].MouseButton1Click:Connect(function() goTo(tab.screen) end) end
+setNavActive(0)
+
+-- ============================================================
+-- CLICK BUTTON LOGIC + FLOAT TEXT
+-- ============================================================
+
+local lastMouseX, lastMouseY = 0, 0
+clickBtn.MouseMoved:Connect(function(x, y)
+	local abs = S_MAIN.AbsolutePosition; local sz  = S_MAIN.AbsoluteSize
+	local cx = abs.X + sz.X * BTN_CX; local cy = abs.Y + sz.Y * BTN_CY + BTN_OY
+	local dx = x - cx; local dy = y - cy; local dist = math.sqrt(dx*dx + dy*dy)
+	local r = BTN_SIZE / 2
+	if dist > r then dx = dx / dist * r; dy = dy / dist * r end
+	lastMouseX = dx; lastMouseY = dy
+end)
+
+local FLOAT_POOL_SIZE = 6
+local _floatPool = {}
+for i = 1, FLOAT_POOL_SIZE do
+	local lbp = lbl(S_MAIN, {Size=UDim2.new(0,180,0,44), Position=UDim2.new(BTN_CX,-90,BTN_CY,BTN_OY-20), Text="+0", TextColor3=C.gold, TextSize=30, Font=Enum.Font.Bangers, ZIndex=10, TextTransparency=1})
+	local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(0,0,0); st.Thickness = 2; st.Transparency = 1; st.Parent = lbp
+	_floatPool[i] = {label = lbp, stroke = st, y = 0, alpha = 1, active = false, ox = 0}
+end
+local _floatPoolIdx = 0
+
+local function floatText(val, isCrit)
+	_floatPoolIdx = (_floatPoolIdx % FLOAT_POOL_SIZE) + 1
+	local slot = _floatPool[_floatPoolIdx]
+	local ox = lastMouseX + math.random(-28, 28)
+	slot.ox = ox; slot.y = lastMouseY - 20; slot.alpha = 0; slot.active = true
+	local textCol = isCrit and Color3.fromRGB(255,80,80) or C.gold
+	local size = isCrit and 34 or 30
+	slot.label.Text = "+"..fmtPrecise(val); slot.label.TextColor3 = textCol; slot.label.TextSize = size; slot.label.TextTransparency = 0
+	slot.label.Position = UDim2.new(BTN_CX, ox - 90, BTN_CY, BTN_OY + slot.y); slot.stroke.Transparency = 0
+end
+
+local lastSqueezeTime = 0
+clickBtn.MouseButton1Down:Connect(function()
+	local now = tick()
+	if now - lastSqueezeTime < 0.066 then return end
+	lastSqueezeTime = now
+	tw(clickBtn, FAST, {Size=UDim2.new(0,BTN_SIZE-39,0,BTN_SIZE-39), Position=UDim2.new(BTN_CX,-(BTN_SIZE-39)/2,BTN_CY,BTN_OY-(BTN_SIZE-39)/2)}):Play()
+	tw(ring1, FAST, {BackgroundTransparency=0.45}):Play()
+end)
+
+local CLICK_COOLDOWN = 0.022
+local lastClickSent, pendingClicks, achRefreshAccum = 0, 0, 0
+local CLIENT_MAX_CPS = 20
+local clientClickLog = {}
+local VISUAL_COOLDOWN = 0.07
+local lastVisualTime, pendingVisualVal = 0, 0
+
+local function doClickVisual(isAuto)
+	local now = tick()
+	local i = 1
+	while i <= #clientClickLog do if now - clientClickLog[i] > 1 then table.remove(clientClickLog, i) else i += 1 end end
+	if #clientClickLog >= CLIENT_MAX_CPS then return end
+	table.insert(clientClickLog, now)
+
+	local earned = math.max(0, asNumber(localData.clicksPerClick) or 0)
+	if earned <= 0 then return end
+	local critChance = localData.critChance or 0
+	local isCrit = critChance > 0 and math.random() < critChance
+	if isCrit then earned = earned * 5 end
+
+	localData.lifetimeClicks = (localData.lifetimeClicks or 0) + 1
+	recordManualClick(earned); displayedClicks += earned
+	if not headerShowingSP then headerClickLabel.Text = fmt(displayedClicks) end
+
+	if isAuto then
+		pendingVisualVal += earned
+		if now - lastVisualTime >= VISUAL_COOLDOWN then
+			lastVisualTime = now; floatText(pendingVisualVal, false); pendingVisualVal = 0
+		end
+	else
+		floatText(earned, isCrit)
+		if isCrit then
+			local cf = lbl(S_MAIN, {Size=UDim2.new(0,140,0,36), Position=UDim2.new(BTN_CX, lastMouseX - 70, BTN_CY, BTN_OY + lastMouseY - 48), Text="CRIT! ×5", TextColor3=Color3.fromRGB(255,80,80), TextSize=26, Font=Enum.Font.Bangers, ZIndex=11})
+			local critStroke = Instance.new("UIStroke"); critStroke.Color = Color3.fromRGB(0,0,0); critStroke.Thickness = 2; critStroke.Parent = cf
+			local critTI = TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			tw(cf, critTI, {Position=UDim2.new(BTN_CX, lastMouseX - 70, BTN_CY, BTN_OY - BTN_SIZE/2 - 100), TextTransparency=1}):Play()
+			tw(critStroke, critTI, {Transparency=1}):Play(); task.delay(0.95, function() cf:Destroy() end)
+		end
+	end
+end
+
+clickBtn.MouseButton1Up:Connect(function()
+	if _G._autoClickerActive then
+		local warning = _G._autoClickWarning
+		if warning then warning.Visible = true; task.delay(1.5, function() warning.Visible = false end) end
+		return
+	end
+	tw(clickBtn, BACK, {Size=UDim2.new(0,BTN_SIZE,0,BTN_SIZE), Position=UDim2.new(BTN_CX,-BTN_SIZE/2,BTN_CY,BTN_OY-BTN_SIZE/2)}):Play()
+	tw(ring1, MED, {BackgroundTransparency=0.7}):Play()
+	doClickVisual(false)
+	local now = tick()
+	if now - lastClickSent >= CLICK_COOLDOWN then lastClickSent = now; RE_onClick:FireServer(1)
+	else pendingClicks += 1 end
+end)
+
+-- ============================================================
+-- ROLL ANIMATION
+-- ============================================================
+
+local eggHovered = {}
+
+local RARITY_HATCH_2D = {
+	Common    = { total=0.90, shakeAmp=7,  preFlash=0.05, crackDur=0.11, burstCount=12, ringScale=1.10, revealScale=0.90 },
+	Uncommon  = { total=1.00, shakeAmp=9,  preFlash=0.06, crackDur=0.12, burstCount=14, ringScale=1.14, revealScale=0.96 },
+	Rare      = { total=1.10, shakeAmp=11, preFlash=0.07, crackDur=0.13, burstCount=17, ringScale=1.18, revealScale=1.02 },
+	Epic      = { total=1.35, shakeAmp=14, preFlash=0.08, crackDur=0.15, burstCount=22, ringScale=1.24, revealScale=1.12 },
+	Legendary = { total=1.65, shakeAmp=18, preFlash=0.10, crackDur=0.17, burstCount=30, ringScale=1.30, revealScale=1.24 },
+	Mythic    = { total=1.90, shakeAmp=22, preFlash=0.12, crackDur=0.20, burstCount=38, ringScale=1.38, revealScale=1.36 },
+}
+
+local function initRollAnimation()
+	local rollOverlay = frm(screenGui, {Size=UDim2.new(1,0,1,0), BackgroundColor3=Color3.fromRGB(2,2,10), BackgroundTransparency=1, ZIndex=50, Visible=false})
+
+	local rollInputBlock = Instance.new("TextButton")
+	rollInputBlock.Size = UDim2.new(1,0,1,0); rollInputBlock.BackgroundTransparency = 1; rollInputBlock.Text = ""; rollInputBlock.ZIndex = 49; rollInputBlock.Visible = false; rollInputBlock.Parent = screenGui
+
+	local rollVfxContainer = frm(rollOverlay, {Size=UDim2.new(1,0,1,0), BackgroundTransparency=1, ZIndex=51})
+
+	local eggShadow = frm(rollVfxContainer, {Size=UDim2.new(0,180,0,42), Position=UDim2.new(0.5,0,0.5,62), BackgroundColor3=Color3.fromRGB(5,5,8), BackgroundTransparency=1, ZIndex=52, Visible=false})
+	eggShadow.AnchorPoint = Vector2.new(0.5, 0.5); corner(eggShadow, UDim.new(1,0))
+
+	local eggGlowRing = frm(rollVfxContainer, {Size=UDim2.new(0,168,0,168), Position=UDim2.new(0.5,0,0.5,-18), BackgroundColor3=C.cyan, BackgroundTransparency=1, ZIndex=53, Visible=false})
+	eggGlowRing.AnchorPoint = Vector2.new(0.5, 0.5); corner(eggGlowRing, UDim.new(1,0))
+	local eggGlowStroke = uistroke(eggGlowRing, C.white, 2, 1)
+
+	local eggRevealImg = makeIconLabel(rollVfxContainer, {Size=UDim2.new(0,112,0,112), Position=UDim2.new(0.5,0,0.5,-18), ZIndex=54, Visible=false})
+	eggRevealImg.AnchorPoint = Vector2.new(0.5, 0.5)
+	local eggRevealFallback = lbl(rollVfxContainer, {Size=UDim2.new(0,112,0,112), Position=UDim2.new(0.5,0,0.5,-18), Text="🥚", TextSize=60, Font=Enum.Font.GothamBold, ZIndex=54, Visible=false})
+	eggRevealFallback.AnchorPoint = Vector2.new(0.5, 0.5)
+
+	local eggCrackA = frm(rollVfxContainer, {Size=UDim2.new(0,5,0,70), Position=UDim2.new(0.5,0,0.5,-16), Rotation=22, BackgroundColor3=C.white, BackgroundTransparency=1, ZIndex=55, Visible=false})
+	eggCrackA.AnchorPoint = Vector2.new(0.5, 0.5); corner(eggCrackA, UDim.new(1,0))
+	local eggCrackB = frm(rollVfxContainer, {Size=UDim2.new(0,5,0,64), Position=UDim2.new(0.5,0,0.5,-16), Rotation=-28, BackgroundColor3=C.white, BackgroundTransparency=1, ZIndex=55, Visible=false})
+	eggCrackB.AnchorPoint = Vector2.new(0.5, 0.5); corner(eggCrackB, UDim.new(1,0))
+
+	local eggBurstContainer = frm(rollVfxContainer, {Size=UDim2.new(1,0,1,0), BackgroundTransparency=1, ZIndex=56, Visible=false})
+
+	local rollBloomFrame = frm(rollOverlay, {Size=UDim2.new(1,0,1,0), BackgroundColor3=Color3.fromRGB(255,255,255), BackgroundTransparency=1, ZIndex=52})
+	do
+		local grad = Instance.new("UIGradient"); grad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(255,255,255)), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(200,220,255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(255,255,255))})
+		grad.Rotation = 45; grad.Parent = rollBloomFrame
+	end
+	local rollFlashFrame = frm(rollOverlay, {Size=UDim2.new(1,0,1,0), BackgroundColor3=Color3.fromRGB(255,255,255), BackgroundTransparency=1, ZIndex=57})
+
+	local rollCard = frm(rollOverlay, {Size=UDim2.new(0,400,0,340), Position=UDim2.new(0.5,-200,0.5,-190), BackgroundColor3=C.bg1, BackgroundTransparency=1, ZIndex=52, Visible=false})
+	corner(rollCard, UDim.new(0,22)); local rollCardStroke = uistroke(rollCard, C.gold, 3, 0)
+
+	local rollPetImg = makeIconLabel(rollCard, {Size=UDim2.new(0,130,0,130), Position=UDim2.new(0.5,-65,0,10), ZIndex=53, Visible=false})
+	local rollPetFallback = lbl(rollCard, {Size=UDim2.new(0,130,0,130), Position=UDim2.new(0.5,-65,0,10), Text="?", TextSize=80, Font=Enum.Font.GothamBold, ZIndex=53, Visible=false})
+	local rollPetName = lbl(rollCard, {Size=UDim2.new(1,0,0,42), Position=UDim2.new(0,0,0,142), Text="???", TextColor3=C.white, TextSize=30, Font=Enum.Font.Bangers, ZIndex=53})
+	local rollRarityBadge = frm(rollCard, {Size=UDim2.new(0.45,0,0,28), Position=UDim2.new(0.275,0,0,186), BackgroundColor3=C.grey, ZIndex=53})
+	corner(rollRarityBadge, UDim.new(0,10)); local rollRarityText = lbl(rollRarityBadge, {Size=UDim2.new(1,0,1,0), Text="Common", TextColor3=Color3.fromRGB(5,5,5), TextSize=14, Font=Enum.Font.GothamBold, ZIndex=54})
+	local rollMultLabel = lbl(rollCard, {Size=UDim2.new(1,0,0,34), Position=UDim2.new(0,0,0,220), Text="x1.0 multiplier", TextColor3=C.gold, TextSize=24, Font=Enum.Font.Bangers, ZIndex=53})
+	local rollInfoLabel = lbl(rollCard, {Size=UDim2.new(0.9,0,0,44), Position=UDim2.new(0.05,0,0,256), Text="", TextColor3=C.cyan, TextSize=14, Font=Enum.Font.GothamMedium, TextWrapped=true, ZIndex=53})
+	local rollCloseBtn = tbtn(rollCard, {Size=UDim2.new(0.55,0,0,46), Position=UDim2.new(0.225,0,0,296), BackgroundColor3=C.gold, Text="CLAIM!", TextColor3=Color3.fromRGB(16,10,0), TextSize=24, Font=Enum.Font.Bangers, ZIndex=53})
+	corner(rollCloseBtn, UDim.new(0,14))
+	rollCloseBtn.MouseEnter:Connect(function() tw(rollCloseBtn, FAST, {BackgroundColor3=Color3.fromRGB(255,230,60)}):Play() end)
+	rollCloseBtn.MouseLeave:Connect(function() tw(rollCloseBtn, FAST, {BackgroundColor3=C.gold}):Play() end)
+
+	local newPetBanner = frm(rollOverlay, {Size=UDim2.new(0,340,0,56), Position=UDim2.new(0.5,-170,0.18,-28), BackgroundColor3=C.gold, BackgroundTransparency=1, ZIndex=55, Visible=false})
+	corner(newPetBanner, UDim.new(0,16))
+	local newPetText = lbl(newPetBanner, {Size=UDim2.new(1,0,1,0), Text="NEW PET!", TextColor3=Color3.fromRGB(10,8,0), TextSize=34, Font=Enum.Font.Bangers, ZIndex=56})
+
+	local rollRunning, awaitingRollResult, pendingEggNum, rollRequestToken, rollAnimToken = false, false, nil, 0, 0
+	local ROLL_REQUEST_TIMEOUT, canTapToClaim = 2.5, false
+	local burstInstances = {}
+	local basePose = { shadowPos = UDim2.new(0.5, 0, 0.5, 62), ringPos = UDim2.new(0.5, 0, 0.5, -18), emojiPos = UDim2.new(0.5, 0, 0.5, -18), crackAPos = UDim2.new(0.5, 0, 0.5, -18), crackBPos = UDim2.new(0.5, 0, 0.5, -18) }
+
+	local function withOffset(base, dx, dy) return UDim2.new(base.X.Scale, base.X.Offset + dx, base.Y.Scale, base.Y.Offset + dy) end
+
+	local function tweenEggOffset(dx, dy, duration, easingStyle, easingDir)
+		local ti = TweenInfo.new(duration, easingStyle or Enum.EasingStyle.Sine, easingDir or Enum.EasingDirection.Out)
+		tw(eggShadow, ti, { Position = withOffset(basePose.shadowPos, dx, dy) }):Play()
+		tw(eggGlowRing, ti, { Position = withOffset(basePose.ringPos, dx, dy) }):Play()
+		tw(eggRevealImg, ti, { Position = withOffset(basePose.emojiPos, dx, dy) }):Play()
+		tw(eggCrackA, ti, { Position = withOffset(basePose.crackAPos, dx, dy) }):Play()
+		tw(eggCrackB, ti, { Position = withOffset(basePose.crackBPos, dx, dy) }):Play()
+	end
+
+	local function clearBurst()
+		for i = #burstInstances, 1, -1 do local p = burstInstances[i]; if p and p.Parent then p:Destroy() end; burstInstances[i] = nil end
+	end
+
+	local function resetRollVisuals()
+		clearBurst()
+		rollVfxContainer.Position = UDim2.new(0, 0, 0, 0)
+		rollBloomFrame.BackgroundTransparency = 1; rollFlashFrame.BackgroundTransparency = 1
+		eggBurstContainer.Visible = false; eggShadow.Visible = false; eggGlowRing.Visible = false; eggRevealImg.Visible = false; eggCrackA.Visible = false; eggCrackB.Visible = false; eggRevealFallback.Visible = false
+		eggShadow.BackgroundTransparency = 1; eggGlowRing.BackgroundTransparency = 1; eggGlowStroke.Transparency = 1; eggGlowStroke.Thickness = 2
+		eggRevealImg.ImageTransparency = 1; eggCrackA.BackgroundTransparency = 1; eggCrackB.BackgroundTransparency = 1
+		eggGlowRing.Size = UDim2.new(0, 168, 0, 168); eggShadow.Size = UDim2.new(0, 180, 0, 42)
+		eggCrackA.Size = UDim2.new(0, 5, 0, 70); eggCrackB.Size = UDim2.new(0, 5, 0, 64)
+		eggCrackA.Rotation = 22; eggCrackB.Rotation = -28; eggRevealImg.Size = UDim2.new(0, 112, 0, 112)
+		eggShadow.Position = basePose.shadowPos; eggGlowRing.Position = basePose.ringPos; eggRevealImg.Position = basePose.emojiPos
+		eggCrackA.Position = basePose.crackAPos; eggCrackB.Position = basePose.crackBPos
+	end
+
+	local function setEggTheme(eggNum)
+		local resolved = math.clamp(math.floor(tonumber(eggNum) or 1), 1, 3)
+		local eggInfo = EGG_INFO[resolved] or EGG_INFO[1]
+		local glow = eggInfo.glow or C.cyan
+		eggGlowRing.BackgroundColor3 = glow; eggGlowStroke.Color = glow:Lerp(C.white, 0.30)
+		eggCrackA.BackgroundColor3 = glow:Lerp(C.white, 0.55); eggCrackB.BackgroundColor3 = glow:Lerp(C.white, 0.55)
+		rollBloomFrame.BackgroundColor3 = glow
+		return eggInfo
+	end
+
+	local function spawnBurstParticle(color, opts)
+		opts = opts or {}; local shard, life, sizeMin, sizeMax = opts.shard == true, opts.life or 0.7, opts.sizeMin or 4, opts.sizeMax or 12
+		local distMin, distMax = opts.distMin or 100, opts.distMax or 260
+		local piece = frm(eggBurstContainer, {Size = UDim2.new(0, math.random(sizeMin, sizeMax), 0, math.random(sizeMin, sizeMax)), Position = UDim2.new(0.5, math.random(-10, 10), 0.5, math.random(-16, 8)), BackgroundColor3 = color, ZIndex = 56})
+		table.insert(burstInstances, piece)
+		corner(piece, UDim.new(0, shard and 2 or 6))
+		if shard then piece.Rotation = math.random(-65, 65) end
+		local a, d = math.random() * math.pi * 2, math.random(distMin, distMax)
+		local endSize = shard and math.random(1, 3) or math.random(1, 2)
+		tw(piece, TweenInfo.new(life, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.new(0.5, math.cos(a) * d, 0.5, math.sin(a) * d), BackgroundTransparency = 1, Size = UDim2.new(0, endSize, 0, endSize), Rotation = piece.Rotation + math.random(-180, 180)}):Play()
+		task.delay(life + 0.06, function() if piece and piece.Parent then piece:Destroy() end end)
+	end
+
+	local function getRollFailureText(result)
+		if type(result) ~= "table" then return "Roll failed. Please try again." end
+		if result.reason == "INSUFFICIENT_CLICKS" then return "Need " .. fmt(result.requiredClicks or 0) .. " clicks (you have " .. fmt(result.currentClicks or 0) .. ")." end
+		if result.reason == "INVALID_EGG" then return "Invalid egg selected. Try reopening the eggs screen." end
+		return "Roll failed due to a server error."
+	end
+
+	local function showRollFailureToast(messageText)
+		local toast = frm(screenGui, {Size=UDim2.new(0,420,0,54), Position=UDim2.new(0.5,-210,0.22,0), BackgroundColor3=Color3.fromRGB(90,26,34), ZIndex=82})
+		corner(toast, UDim.new(0,14)); uistroke(toast, Color3.fromRGB(255,112,126), 2, 0.05)
+		lbl(toast, {Size=UDim2.new(0.94,0,1,0), Position=UDim2.new(0.03,0,0,0), Text=messageText or "Roll failed.", TextColor3=Color3.fromRGB(255,220,225), TextSize=18, Font=Enum.Font.GothamBold, TextWrapped=true, ZIndex=83})
+		task.spawn(function() task.wait(1.9); tw(toast, MED, {BackgroundTransparency=1}):Play(); task.delay(0.26, function() if toast and toast.Parent then toast:Destroy() end end) end)
+	end
+
+	local function openRollIntro(eggNum)
+		local selectedEgg = math.clamp(math.floor(tonumber(eggNum) or 1), 1, 3)
+		rollAnimToken += 1; resetRollVisuals()
+		local info = setEggTheme(selectedEgg)
+
+		rollOverlay.Visible = true; rollCard.Visible = false; newPetBanner.Visible = false; rollInputBlock.Visible = true
+		canTapToClaim = false; eggBurstContainer.Visible = true; eggShadow.Visible = true; eggGlowRing.Visible = true; eggCrackA.Visible = false; eggCrackB.Visible = false
+		eggShadow.BackgroundTransparency = 0.62; eggGlowRing.BackgroundTransparency = 0.90; eggGlowStroke.Transparency = 0.18
+
+		eggRevealImg.Visible = true
+		eggRevealImg.ImageTransparency = 1
+		eggRevealImg.Size = UDim2.new(0, 74, 0, 74)
+		setIcon(eggRevealImg, "egg_" .. tostring(selectedEgg), eggRevealFallback, info.emoji, info.color)
+
+		eggGlowRing.Size = UDim2.new(0, 142, 0, 142); eggShadow.Size = UDim2.new(0, 156, 0, 36)
+		eggShadow.Position = basePose.shadowPos; eggGlowRing.Position = basePose.ringPos; eggRevealImg.Position = basePose.emojiPos
+
+		tw(rollOverlay, MED, {BackgroundTransparency=0.12}):Play()
+		tw(eggRevealImg, TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.new(0, 118, 0, 118), ImageTransparency = 0}):Play()
+		tw(eggGlowRing, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, 170, 0, 170), BackgroundTransparency = 0.82}):Play()
+		tw(eggShadow, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, 178, 0, 40), BackgroundTransparency = 0.54}):Play()
+		rollBloomFrame.BackgroundColor3 = info.glow or C.cyan; rollBloomFrame.BackgroundTransparency = 0.94
+		tw(rollBloomFrame, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1}):Play()
+	end
+
+	local function closeRollOverlay()
+		rollAnimToken += 1; local closeToken = rollAnimToken; rollRunning = false; canTapToClaim = false; pendingEggNum = nil; rollInputBlock.Visible = false; resetRollVisuals()
+		tw(rollOverlay, MED, {BackgroundTransparency=1}):Play()
+		task.delay(0.28, function() if closeToken ~= rollAnimToken then return end; rollOverlay.Visible = false; rollCard.Visible = false; newPetBanner.Visible = false end)
+	end
+
+	local function playRoll2DSequence(result)
+		local petId = result and result.petId; if type(petId) ~= "string" then return nil, nil, nil end
+		local pd = PET_DATA[petId]; if not pd then return nil, nil, nil end
+		local rc = RARITY_COLOR[pd.rarity] or C.white; local fx = RARITY_HATCH_2D[pd.rarity] or RARITY_HATCH_2D.Common; local token = rollAnimToken
+		local eggNum = math.clamp(math.floor(tonumber(result.eggNum or PET_TO_EGG[petId] or 1)), 1, 3)
+		local eggInfo = setEggTheme(eggNum)
+
+		eggBurstContainer.Visible = true; eggShadow.Visible = true; eggGlowRing.Visible = true; eggCrackA.Visible = true; eggCrackB.Visible = true
+		eggShadow.BackgroundTransparency = 0.54; eggGlowRing.BackgroundTransparency = 0.80; eggGlowStroke.Transparency = 0.10; eggGlowStroke.Thickness = 2
+
+		eggRevealImg.Visible = true; eggRevealImg.ImageTransparency = 0; eggRevealImg.Size = UDim2.new(0, 116, 0, 116)
+
+		eggCrackA.BackgroundTransparency = 1; eggCrackB.BackgroundTransparency = 1; eggCrackA.Size = UDim2.new(0, 4, 0, 12); eggCrackB.Size = UDim2.new(0, 4, 0, 12)
+		eggShadow.Size = UDim2.new(0, 180, 0, 42); eggGlowRing.Size = UDim2.new(0, 168, 0, 168)
+		eggShadow.Position = basePose.shadowPos; eggGlowRing.Position = basePose.ringPos; eggRevealImg.Position = basePose.emojiPos; eggCrackA.Position = basePose.crackAPos; eggCrackB.Position = basePose.crackBPos
+
+		local elapsed, popDur = 0, 0.16
+		tw(eggRevealImg, TweenInfo.new(popDur * 0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.new(0, 136, 0, 136)}):Play()
+		tw(eggGlowRing, TweenInfo.new(popDur * 0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, 188, 0, 188), BackgroundTransparency = 0.72}):Play()
+		tw(eggShadow, TweenInfo.new(popDur * 0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, 206, 0, 48), BackgroundTransparency = 0.48}):Play()
+		task.wait(popDur * 0.6); elapsed += popDur * 0.6; if token ~= rollAnimToken or not rollRunning then return nil, nil, nil end
+
+		tw(eggRevealImg, TweenInfo.new(popDur * 0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Size = UDim2.new(0, 118, 0, 118)}):Play()
+		tw(eggGlowRing, TweenInfo.new(popDur * 0.4, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Size = UDim2.new(0, 170, 0, 170)}):Play()
+		task.wait(popDur * 0.4); elapsed += popDur * 0.4; if token ~= rollAnimToken or not rollRunning then return nil, nil, nil end
+
+		local shakeDur = 0.18 + math.clamp((fx.shakeAmp - 7) * 0.012, 0, 0.22); local shakeSteps = math.max(4, math.floor(shakeDur / 0.04)); local stepDur = shakeDur / shakeSteps
+		for i = 1, shakeSteps do
+			if token ~= rollAnimToken or not rollRunning then return nil, nil, nil end
+			local progress = (i - 1) / math.max(1, shakeSteps - 1); local amp = fx.shakeAmp * (1 - progress * 0.62)
+			local dx = math.floor(((i % 2 == 0) and -1 or 1) * amp); local dy = math.floor(math.sin(i * 1.6) * amp * 0.28)
+			tweenEggOffset(dx, dy, stepDur, Enum.EasingStyle.Sine, Enum.EasingDirection.Out); task.wait(stepDur); elapsed += stepDur
+		end
+		if token ~= rollAnimToken or not rollRunning then return nil, nil, nil end
+		tweenEggOffset(0, 0, 0.05, Enum.EasingStyle.Sine, Enum.EasingDirection.Out); task.wait(0.05); elapsed += 0.05; if token ~= rollAnimToken or not rollRunning then return nil, nil, nil end
+
+		local flashIn = math.max(0.04, fx.preFlash); local flashOut = math.max(0.08, fx.preFlash * 1.1)
+		rollFlashFrame.BackgroundColor3 = rc; tw(rollFlashFrame, TweenInfo.new(flashIn, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = rc, BackgroundTransparency = 0.16}):Play()
+		tw(rollBloomFrame, TweenInfo.new(flashIn, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = eggInfo.glow or rc, BackgroundTransparency = 0.42}):Play()
+
+		tw(eggCrackA, TweenInfo.new(fx.crackDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, 6, 0, 98), BackgroundTransparency = 0.08, Rotation = 28}):Play()
+		tw(eggCrackB, TweenInfo.new(fx.crackDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, 6, 0, 86), BackgroundTransparency = 0.14, Rotation = -34}):Play()
+		task.wait(fx.crackDur); elapsed += fx.crackDur; if token ~= rollAnimToken or not rollRunning then return nil, nil, nil end
+
+		tw(rollFlashFrame, TweenInfo.new(flashOut, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1}):Play()
+		tw(rollBloomFrame, TweenInfo.new(flashOut * 1.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1}):Play(); elapsed += flashIn
+
+		local burstCount = fx.burstCount; local whiteBurst = math.max(2, math.floor(burstCount * 0.30)); local shardBurst = math.max(3, math.floor(burstCount * 0.35))
+		for i = 1, burstCount do spawnBurstParticle((i % 3 == 0) and C.white or rc, {sizeMin = 5, sizeMax = 14, life = 0.72, distMin = 110, distMax = 310}) end
+		for _ = 1, whiteBurst do spawnBurstParticle(C.white, {sizeMin = 3, sizeMax = 9, life = 0.62, distMin = 90, distMax = 240}) end
+		for _ = 1, shardBurst do spawnBurstParticle(eggInfo.color or rc, {shard = true, sizeMin = 5, sizeMax = 13, life = 0.66, distMin = 120, distMax = 320}) end
+		if pd.rarity == "Legendary" or pd.rarity == "Mythic" then for _ = 1, 10 do spawnBurstParticle(C.gold, {sizeMin = 4, sizeMax = 11, life = 0.80, distMin = 140, distMax = 360}) end end
+		if pd.rarity == "Mythic" then for _ = 1, 10 do spawnBurstParticle(Color3.fromRGB(255, 140, 180), {shard = true, sizeMin = 5, sizeMax = 12, life = 0.86, distMin = 170, distMax = 390}) end end
+
+		local vanishDur = 0.16
+		tw(eggRevealImg, TweenInfo.new(vanishDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {ImageTransparency = 1, Size = UDim2.new(0, 88, 0, 88)}):Play()
+		local ringSize = math.floor(168 * fx.ringScale)
+		tw(eggGlowRing, TweenInfo.new(vanishDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, ringSize, 0, ringSize), BackgroundTransparency = 1}):Play()
+		tw(eggGlowStroke, TweenInfo.new(vanishDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 1, Thickness = 1}):Play()
+		tw(eggShadow, TweenInfo.new(vanishDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1, Size = UDim2.new(0, 226, 0, 50)}):Play()
+		tw(eggCrackA, TweenInfo.new(vanishDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1}):Play()
+		tw(eggCrackB, TweenInfo.new(vanishDur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1}):Play()
+		task.wait(vanishDur); elapsed += vanishDur; if token ~= rollAnimToken or not rollRunning then return nil, nil, nil end
+
+		eggShadow.Visible = false; eggGlowRing.Visible = false; eggRevealImg.Visible = false; eggCrackA.Visible = false; eggCrackB.Visible = false
+		local hold = math.max(0, fx.total - elapsed)
+		if hold > 0 then task.wait(hold) end
+		return pd, rc, fx
+	end
+
+	local function playRoll(result)
+		if rollRunning then return end; if type(result) ~= "table" or result.ok ~= true then return end
+		if type(result.petId) ~= "string" then closeRollOverlay(); return end
+
+		rollRunning = true; canTapToClaim = false
+		if not rollOverlay.Visible then openRollIntro(result.eggNum or PET_TO_EGG[result.petId] or 1) end
+
+		local pd, rc, fx = playRoll2DSequence(result)
+		if not pd then rollRunning = false; closeRollOverlay(); return end
+
+		local uiRevealScale = math.clamp((fx and fx.revealScale) or 1, 0.85, 1.5)
+
+		rollCardStroke.Color = rc; rollCard.BackgroundTransparency = 1; rollCard.Visible = true
+
+		setIcon(rollPetImg, "pet_" .. tostring(pd.id), rollPetFallback, pd.emoji, rc)
+		rollPetImg.ImageTransparency = 1; rollPetImg.Size = UDim2.new(0, 34, 0, 34); rollPetImg.Visible = true
+		rollPetFallback.TextTransparency = 1; rollPetFallback.TextSize = 20
+
+		rollPetName.Text = pd.name; rollPetName.TextTransparency = 1
+		rollRarityBadge.BackgroundColor3 = rc; rollRarityText.Text = pd.rarity
+		rollMultLabel.Text = "x"..pd.multiplier.." multiplier"; rollMultLabel.TextTransparency = 1
+		rollInfoLabel.Text = result.isDuplicate and "Duplicate collected! Keep rolling to craft Golden." or (result.isNew and "NEW PET added to your inventory!" or "Pet collected! (x"..(result.petCount or 1)..")")
+		rollInfoLabel.TextColor3 = result.isDuplicate and Color3.fromRGB(255,160,60) or C.green
+
+		tw(rollCard, TweenInfo.new(0.3 * uiRevealScale), {BackgroundTransparency=0}):Play()
+		tw(rollPetImg, BACK, {ImageTransparency=0, Size=UDim2.new(0, 130, 0, 130)}):Play()
+		tw(rollPetFallback, BACK, {TextTransparency=0, TextSize=100}):Play()
+		task.wait(0.12 * uiRevealScale); tw(rollPetName, MED, {TextTransparency=0}):Play()
+		task.wait(0.08 * uiRevealScale); tw(rollMultLabel, MED, {TextTransparency=0}):Play()
+
+		if result.isNew then
+			newPetBanner.BackgroundColor3 = rc; newPetText.TextColor3 = Color3.fromRGB(5,5,5)
+			newPetBanner.BackgroundTransparency = 1; newPetBanner.Visible = true
+			tw(newPetBanner, BACK, {BackgroundTransparency=0}):Play()
+			if pd.rarity == "Mythic" then
+				for _ = 1, 24 do spawnBurstParticle(Color3.fromRGB(255,40,40), {sizeMin=8, sizeMax=20, life=1.1, distMin=180, distMax=460}) end
+				for _ = 1, 16 do spawnBurstParticle(Color3.fromRGB(255,140,140), {shard=true, sizeMin=6, sizeMax=16, life=0.9, distMin=160, distMax=420}) end
+			elseif pd.rarity == "Legendary" then
+				for _ = 1, 20 do spawnBurstParticle(C.gold, {sizeMin=7, sizeMax=18, life=1.0, distMin=170, distMax=430}) end
+			elseif pd.rarity == "Epic" then
+				for _ = 1, 14 do spawnBurstParticle(C.purple, {sizeMin=7, sizeMax=16, life=0.92, distMin=150, distMax=380}) end
+			end
+		end
+
+		canTapToClaim = true; rollRunning = false
+	end
+
+	RE_rollEgg.OnClientEvent:Connect(function(result)
+		if type(result) ~= "table" then rollRunning = false; closeRollOverlay(); return end
+		local incomingEggNum = tonumber(result.eggNum)
+		if awaitingRollResult and pendingEggNum and incomingEggNum and math.floor(incomingEggNum) ~= pendingEggNum then return end
+		if (not awaitingRollResult) and (not rollRunning) then return end
+		awaitingRollResult = false; pendingEggNum = nil
+		if result.ok ~= true then rollRunning = false; closeRollOverlay(); showRollFailureToast(getRollFailureText(result)); return end
+		task.spawn(function() local ok, err = pcall(playRoll, result); if not ok then rollRunning = false; closeRollOverlay() end end)
+	end)
+
+	rollInputBlock.MouseButton1Click:Connect(function() if canTapToClaim and (not rollRunning) and (not awaitingRollResult) then closeRollOverlay() end end)
+	rollCloseBtn.MouseButton1Click:Connect(function() if rollRunning or awaitingRollResult then return end; awaitingRollResult = false; rollRunning = false; closeRollOverlay() end)
+
+	for eggNum, rb in pairs(EggUI.rollBtns) do
+		local info = EGG_INFO[eggNum]
+		rb.MouseEnter:Connect(function()
+			eggHovered[eggNum] = true; if rollRunning then return end
+			local effCost = getEffectiveEggCost(info.cost); local canAfford = displayedClicks >= effCost
+			tw(rb, FAST, {BackgroundColor3 = canAfford and info.color:Lerp(Color3.new(1,1,1), 0.5) or Color3.fromRGB(80, 70, 105)}):Play()
+			tw(rb, FAST, {BackgroundColor3 = canAfford and info.color:Lerp(Color3.new(1,1,1), 0.5) or Color3.fromRGB(60, 40, 50)}):Play()
+		end)
+		rb.MouseLeave:Connect(function()
+			eggHovered[eggNum] = false; if rollRunning then return end
+			local effCost = getEffectiveEggCost(info.cost); local canAfford = displayedClicks >= effCost
+			tw(rb, FAST, {BackgroundColor3 = canAfford and info.color or Color3.fromRGB(60, 55, 80)}):Play()
+			tw(rb, FAST, {BackgroundColor3 = canAfford and info.color or Color3.fromRGB(35, 25, 35)}):Play()
+		end)
+		rb.MouseButton1Click:Connect(function()
+			local effCost = getEffectiveEggCost(info.cost); if displayedClicks < effCost then return end
+			if rollRunning or awaitingRollResult then return end
+			openRollIntro(eggNum); awaitingRollResult = true; pendingEggNum = eggNum; rollRequestToken += 1; local token = rollRequestToken
+			task.delay(ROLL_REQUEST_TIMEOUT, function() if awaitingRollResult and rollRequestToken == token then awaitingRollResult = false; pendingEggNum = nil; rollRunning = false; closeRollOverlay(); showRollFailureToast("Roll request timed out. Try again.") end end)
+			RE_rollEgg:FireServer(eggNum)
+		end)
+	end
+end
+
+initRollAnimation()
+
+-- ============================================================
+-- PRESTIGE POPUP
+-- ============================================================
+
+local MAX_PRESTIGE = 20
+
+function openPresPopup()
+	local spMagnetLv = localData.spUpgrades and (localData.spUpgrades["sp_mult1"] or 0) or 0
+	local spMult = 1 + spMagnetLv * 0.20
+	local baseSP = math.floor((localData.prestige or 0) / 3) + 1
+	local spPreview = math.max(1, math.floor(baseSP * spMult))
+	local spAfter   = (localData.starPoints or 0) + spPreview
+	presPopupInfo.Text = "You earn: +"..spPreview.." ⭐ Star Points\nTotal SP after: "..spAfter.."  ("..spBonusPreview(spAfter).." mult)\n\nYou LOSE:\n  All clicks & upgrades\n\nPets & SP upgrades are SAFE."
+	presPopup.Visible=true; presPopup.BackgroundTransparency=0; presDimmer.Visible=true
+end
+
+PresUI.btn.MouseButton1Click:Connect(function()
+	if (localData.prestige or 0) >= MAX_PRESTIGE then return end
+	local req = 1000000 * (10 ^ (localData.prestige or 0))
+	if localData.totalClicks >= req then openPresPopup() end
+end)
+
+presConfirmBtn.MouseButton1Click:Connect(function()
+	tw(presPopup, MED, {BackgroundTransparency=1}):Play(); task.delay(0.28, function() presPopup.Visible=false end); presDimmer.Visible = false
+	RE_doPrestige:FireServer(); goTo(0)
+end)
+
+presCancelBtn.MouseButton1Click:Connect(function() presPopup.Visible = false; presDimmer.Visible = false end)
+
+function updatePrestigeInfo()
+	local pres = localData.prestige or 0
+	local isMaxed = pres >= MAX_PRESTIGE
+	PresUI.levelNum.Text = tostring(pres)
+	PresUI.bonusLabel.Text = spBonusPreview(localData.starPoints or 0)
+
+	if isMaxed then
+		PresUI.reqLabel.Text = "MAX LEVEL"; PresUI.reqLabel.TextColor3 = C.gold; PresUI.reqStroke.Color = C.gold; PresUI.reqStroke.Transparency = 0.1
+		PresUI.btn.Text = "MAX LEVEL"; PresUI.btn.Active = false; tw(PresUI.btn, FAST, {BackgroundColor3 = Color3.fromRGB(40,30,55)}):Play()
+		return
+	end
+
+	PresUI.btn.Text = "PRESTIGE NOW!"; PresUI.btn.Active = true
+	local req = 1000000 * (10 ^ pres); local can = localData.totalClicks >= req
+
+	if can then
+		PresUI.reqLabel.Text = "READY!"; PresUI.reqLabel.TextColor3 = C.green; PresUI.reqStroke.Color = C.green; PresUI.reqStroke.Transparency = 0.1
+		if not PresUI.hovered then tw(PresUI.btn, FAST, {BackgroundColor3 = C.purpleDim}):Play() end
+	else
+		local missing = req - localData.totalClicks
+		PresUI.reqLabel.Text = fmt(missing).." more"; PresUI.reqLabel.TextColor3 = C.red; PresUI.reqStroke.Color = C.red; PresUI.reqStroke.Transparency = 0.3
+		if not PresUI.hovered then tw(PresUI.btn, FAST, {BackgroundColor3 = Color3.fromRGB(40,30,55)}):Play() end
+	end
+end
+
+-- ============================================================
+-- UPDATE INVENTORY
+-- ============================================================
+
+function refreshInventory()
+	for petId, ui in pairs(invCards) do
+		local inInv = false
+		for _, id in ipairs(localData.inventory) do if id == petId then inInv = true break end end
+		if not inInv then ui.card:Destroy(); invCards[petId] = nil; invCardsBuilt[petId] = nil end
+	end
+
+	for _, petId in ipairs(localData.inventory) do if not invCardsBuilt[petId] then buildInvCard(petId) end end
+
+	for _, petId in ipairs(localData.inventory) do
+		local ui = invCards[petId]
+		local pd = getPetInfo(petId)
+		if ui and pd then
+			local rVal = RARITY_VAL[pd.rarity] or 1
+			if pd.isGolden then rVal = rVal + 0.5 end
+			local mVal = pd.multiplier
+			local sortWeight = 0
+			if currentSortIdx == 1 then
+				sortWeight = -mVal * 1000 - rVal
+			elseif currentSortIdx == 2 then
+				sortWeight = -rVal * 1000 - mVal
+			elseif currentSortIdx == 3 then
+				sortWeight = mVal * 1000 + rVal
+			elseif currentSortIdx == 4 then
+				sortWeight = rVal * 1000 + mVal
+			end
+			ui.card.LayoutOrder = math.floor(sortWeight * 100)
+		end
+	end
+
+	for petId, ui in pairs(invCards) do
+		local count = localData.petCounts and localData.petCounts[petId] or 1
+		ui.countLbl.Text = "x" .. count
+		ui.craftBtn.Visible = (not ui.pd.isGolden and count >= 5)
+
+		local isEq = localData.equippedSkin == petId
+		if isEq then
+			ui.eqBtn.Text = "UNEQUIP"; ui.eqBtn.BackgroundColor3 = ui.eqBtnHovered and PET_THEME.btnUnequipHover or PET_THEME.btnUnequip
+			ui.eqBtn.TextColor3 = Color3.fromRGB(255, 245, 245)
+			if ui.eqBtnStroke then ui.eqBtnStroke.Color = Color3.fromRGB(255, 112, 132); ui.eqBtnStroke.Transparency = 0 end
+		else
+			ui.eqBtn.Text = "EQUIP"; ui.eqBtn.BackgroundColor3 = ui.eqBtnHovered and PET_THEME.btnEquipHover or PET_THEME.btnEquip
+			ui.eqBtn.TextColor3 = Color3.fromRGB(30, 18, 0)
+			if ui.eqBtnStroke then ui.eqBtnStroke.Color = ui.rarityColor or PET_THEME.panelStroke; ui.eqBtnStroke.Transparency = 0.1 end
+		end
+		if isEq then tw(ui.cardStroke, MED, {Color=Color3.fromRGB(255, 230, 110), Transparency=0}):Play() else tw(ui.cardStroke, MED, {Color=ui.rarityColor or PET_THEME.panelStroke, Transparency=0.15}):Play() end
+	end
+
+	local pd = getPetInfo(localData.equippedSkin or "dog")
+	if pd then
+		local rc = pd.isGolden and C.gold or (PET_RARITY_NEON[pd.rarity] or RARITY_COLOR[pd.rarity])
+		setIcon(equippedIconImage, "pet_" .. pd.baseId, equippedEmoji, pd.emoji, rc)
+		equippedName.Text = pd.name; equippedRarity.Text = pd.rarity; equippedRarity.TextColor3 = rc; equippedMult.Text = "x"..pd.multiplier; equippedMult.TextColor3 = rc; equippedBannerStroke.Color = rc
+	end
+
+	invScroll.CanvasSize = UDim2.new(0,0,0,invGrid.AbsoluteContentSize.Y+16)
+end
+
+-- ============================================================
+-- FULL UI UPDATE
+-- ============================================================
+
+function updateClickBtnSkin()
+	local pd = getPetInfo(localData.equippedSkin or "dog")
+	if not pd then return end
+	local rc = pd.isGolden and C.gold or RARITY_COLOR[pd.rarity]
+	setIcon(clickBtnIconImage, "pet_" .. pd.baseId, clickBtnIconFallback, pd.emoji, rc)
+	clickStroke.Color = rc; ring1.BackgroundColor3 = rc; ring2.BackgroundColor3 = rc; ring3.BackgroundColor3 = rc
+	setIcon(headerPetIconImage, "pet_" .. pd.baseId, headerPetEmoji, pd.emoji, rc)
+	headerPetName.Text = pd.name; headerPetMult.Text = "x"..pd.multiplier.." mult"; headerPetMult.TextColor3 = rc
+end
+
+getEffectiveEggCost = function(baseCost)
+	local base = asNumber(baseCost) or 0
+	local disc = math.clamp(asNumber(localData.eggDiscount) or 0, 0, 0.45)
+	return math.max(1, math.floor(base * (1 - disc)))
+end
+
+function refreshAchievements()
+	local function getAchProgress(ach)
+		if ach.req_lifetime then return math.min(localData.lifetimeClicks or 0, ach.req_lifetime), ach.req_lifetime end
+		if ach.req_owned    then return math.min(localData.clicks or 0, ach.req_owned), ach.req_owned end
+		if ach.req_clicks   then return math.min(localData.totalClicks or 0, ach.req_clicks), ach.req_clicks end
+		if ach.req_prestige then return math.min(localData.prestige or 0, ach.req_prestige), ach.req_prestige end
+		if ach.req_pets     then local cnt = math.max(0, #(localData.inventory or {}) - 1); return math.min(cnt, ach.req_pets), ach.req_pets end
+		if ach.req_sp       then return math.min(localData.totalSPEarned or 0, ach.req_sp), ach.req_sp end
+		if ach.req_streak   then return math.min(localData.dailyStreak or 0, ach.req_streak), ach.req_streak end
+		local done = localData.achievements and localData.achievements[ach.id]
+		return done and 1 or 0, 1
+	end
+
+	local tot_cpc, tot_cps, tot_all, tot_sp, unlocked = 0, 0, 0, 0, 0
+
+	for _, ach in ipairs(ACHIEVEMENT_DISPLAY) do
+		local ui = AchUI.cards[ach.id]; if not ui then continue end
+		local isUnlocked = localData.achievements and localData.achievements[ach.id]
+		local isClaimed  = localData.claimedAchievements and localData.claimedAchievements[ach.id]
+
+		if isClaimed then
+			local rw = ach.reward
+			if rw:find("CPC") then tot_cpc += tonumber(rw:match("([%d%.]+)")) or 0
+			elseif rw:find("CPS") then tot_cps += tonumber(rw:match("([%d%.]+)")) or 0
+			elseif rw:find("All") then tot_all += tonumber(rw:match("([%d%.]+)")) or 0
+			elseif rw:find("SP") then tot_sp += tonumber(rw:match("([%d%.]+)")) or 0 end
+		end
+
+		local cur, maxVal = getAchProgress(ach); local ratio = maxVal > 0 and math.clamp(cur / maxVal, 0, 1) or 0
+
+		if isClaimed then
+			ui.progressFill.Size = UDim2.new(1,0,1,0); ui.progressFill.BackgroundColor3 = C.green; ui.progressText.Text = "Completed!"; ui.progressText.TextColor3 = C.green
+		elseif isUnlocked then
+			ui.progressFill.Size = UDim2.new(1,0,1,0); ui.progressFill.BackgroundColor3 = C.gold; ui.progressText.Text = "Ready to claim!"; ui.progressText.TextColor3 = C.gold
+		else
+			ui.progressFill.Size = UDim2.new(ratio,0,1,0); ui.progressFill.BackgroundColor3 = Color3.fromRGB(60,140,255)
+			ui.progressText.Text = maxVal == 1 and (cur == 1 and "Done!" or "Not yet") or fmt(cur).." / "..fmt(maxVal)
+			ui.progressText.TextColor3 = Color3.fromRGB(80,72,110)
+		end
+
+		if isClaimed then
+			unlocked += 1; ui.row.BackgroundColor3 = Color3.fromRGB(10,28,16); tw(ui.rowStroke, FAST, {Color=C.green, Transparency=0.2}):Play(); tw(ui.stripe, FAST, {BackgroundColor3=C.green}):Play()
+			tw(ui.iconL, FAST, {TextTransparency=0}):Play(); if ui.iconImg then tw(ui.iconImg, FAST, {ImageTransparency=0, ImageColor3=C.green}):Play() end
+			tw(ui.nameL, FAST, {TextColor3=C.green}):Play(); ui.claimBtn.Visible = false; ui.claimedBadge.Visible = true
+		elseif isUnlocked then
+			unlocked += 1; ui.row.BackgroundColor3 = Color3.fromRGB(24,18,8); tw(ui.rowStroke, FAST, {Color=C.gold, Transparency=0}):Play(); tw(ui.stripe, FAST, {BackgroundColor3=C.gold}):Play()
+			tw(ui.iconL, FAST, {TextTransparency=0}):Play(); if ui.iconImg then tw(ui.iconImg, FAST, {ImageTransparency=0, ImageColor3=C.gold}):Play() end
+			tw(ui.nameL, FAST, {TextColor3=C.gold}):Play(); ui.claimBtn.Visible = true; ui.claimedBadge.Visible = false
+		else
+			ui.row.BackgroundColor3 = Color3.fromRGB(16,12,32); tw(ui.rowStroke, FAST, {Color=Color3.fromRGB(50,40,80), Transparency=0.2}):Play(); tw(ui.stripe, FAST, {BackgroundColor3=C.greyDark}):Play()
+			tw(ui.iconL, FAST, {TextTransparency=0.55}):Play(); if ui.iconImg then tw(ui.iconImg, FAST, {ImageTransparency=0.55, ImageColor3=C.grey}):Play() end
+			tw(ui.nameL, FAST, {TextColor3=C.grey}):Play(); ui.claimBtn.Visible = false; ui.claimedBadge.Visible = false
+		end
+	end
+
+	AchUI.countLabel.Text = unlocked .. " / " .. #ACHIEVEMENT_DISPLAY
+	if AchUI.boostCPC then AchUI.boostCPC.Text = "📳 CPC +" .. tot_cpc .. "%"; AchUI.boostCPS.Text = "⚙️ CPS +" .. tot_cps .. "%"; AchUI.boostAll.Text = "🌀 All +" .. tot_all .. "%"; AchUI.boostSP.Text = "⭐ SP +" .. tot_sp .. "%" end
+	local streak = localData.dailyStreak or 0
+	if AchUI.streakLabel then AchUI.streakLabel.Text = "Streak: " .. streak .. (streak == 1 and " day" or " days") .. " 🔥" end
+end
+
+function updateUI()
+	if headerShowingSP then
+		headerClickLabel.Text = tostring(localData.starPoints or 0); headerCPSLabel.Text = spBonusPreview(localData.starPoints or 0) .. " mult"
+	else
+		headerClickLabel.Text = fmt(localData.clicks); headerCPSLabel.Text = "/s: "..fmt((localData.clicksPerSecond or 0) + getManualCPS())
+	end
+	if headerMultLabel then headerMultLabel.Text = "×" .. fmt(math.max(1, localData.clicksPerClick or 1)) end
+
+	statTotal.Text = fmt(localData.totalClicks); statCPC.Text = fmt(localData.clicksPerClick); statCPS.Text = fmt(localData.clicksPerSecond); statPrestige.Text = tostring(localData.prestige)
+	updateClickBtnSkin(); updatePrestigeInfo(); refreshInventory(); refreshAchievements()
+
+	for id, ui in pairs(upgradeBtns) do
+		local lv = localData.upgrades[id] or 0; local cost = getUpgradeCost(ui.upg); ui.lvLabel.Text = "Lv."..lv
+		if lv >= ui.upg.maxLevel then ui.buyBtn.Text = "MAXED"; ui.buyBtn.BackgroundColor3 = C.greyDark; ui.buyBtn.TextColor3 = C.grey
+		elseif not ui.hovered then
+			ui.buyBtn.Text = "Buy — "..fmt(cost).." Clicks"; local canAfford = displayedClicks >= cost
+			ui.buyBtn.BackgroundColor3 = canAfford and C.gold or Color3.fromRGB(70,55,10); ui.buyBtn.TextColor3 = canAfford and Color3.fromRGB(0,0,0) or C.grey
+		end
+	end
+
+	local sp = localData.starPoints or 0; spBalanceLabel.Text = tostring(sp)
+	for id, ui in pairs(spUpgradeBtns) do
+		if ui.hovered then continue end
+		local lv = localData.spUpgrades[id] or 0; local cost = getSPUpgradeCost(ui.upg); ui.lvLabel.Text = lv.."/"..ui.upg.maxLevel
+		if lv >= ui.upg.maxLevel or cost == math.huge then ui.buyBtn.Text = "MAXED"; ui.buyBtn.BackgroundColor3 = Color3.fromRGB(80,60,10); ui.buyBtn.TextColor3 = C.grey
+		else
+			ui.buyBtn.Text = "⭐ " .. cost .. " SP"; local canAfford = sp >= cost
+			ui.buyBtn.BackgroundColor3 = canAfford and C.gold or Color3.fromRGB(50,40,10); ui.buyBtn.TextColor3 = canAfford and Color3.fromRGB(0,0,0) or C.grey
+		end
+	end
+
+	EggUI.clickLabel.Text = fmt(displayedClicks)
+	for eggNum, rb in pairs(EggUI.rollBtns) do
+		local pLeg = localData.pityLeg and localData.pityLeg[eggNum] or 0
+		local pMyth = localData.pityMythic and localData.pityMythic[eggNum] or 0
+		if EggUI.pityLabels and EggUI.pityLabels[eggNum] then
+			EggUI.pityLabels[eggNum].Text = string.format("Pity: %d/30 Leg | %d/100 Mythic", pLeg, pMyth)
+		end
+
+		if eggHovered[eggNum] then continue end
+		local info = EGG_INFO[eggNum]; local effCost = getEffectiveEggCost(info.cost)
+		if displayedClicks >= effCost then 
+			rb.BackgroundColor3 = info.color; rb.TextColor3 = Color3.fromRGB(8,8,16); rb.Text = "ROLL!"; rb.TextSize = 22; rb.Font = Enum.Font.Bangers
+			if EggUI.rollStrokes and EggUI.rollStrokes[eggNum] then EggUI.rollStrokes[eggNum].Transparency = 0.05 end
+		else 
+			rb.BackgroundColor3 = Color3.fromRGB(35, 25, 35); rb.TextColor3 = Color3.fromRGB(255, 80, 80); rb.Text = "NEED "..fmt(effCost); rb.TextSize = 20; rb.Font = Enum.Font.Bangers
+			if EggUI.rollStrokes and EggUI.rollStrokes[eggNum] then EggUI.rollStrokes[eggNum].Transparency = 1 end
+		end
+	end
+end
+
+-- ============================================================
+-- SERVER SYNC
+-- ============================================================
+
+RE_syncData.OnClientEvent:Connect(function(data)
+	if not _loadSyncDone then _loadSyncDone = true; task.spawn(tryRevealUI) end
+	if data.upgrades then for id,lv in pairs(data.upgrades) do localData.upgrades[id]=lv end end
+
+	if data.clicks ~= nil then localData.clicks = data.clicks end
+	if data.totalClicks ~= nil then localData.totalClicks = data.totalClicks end
+	if data.prestige ~= nil then localData.prestige = data.prestige end
+	if data.clicksPerClick ~= nil then localData.clicksPerClick = data.clicksPerClick end
+	if data.clicksPerSecond ~= nil then localData.clicksPerSecond = data.clicksPerSecond end
+
+	if data.inventory ~= nil then
+		localData.inventory = type(data.inventory) == "table" and data.inventory or {"dog"}
+		if not hasPetInList(localData.inventory, "dog") then table.insert(localData.inventory, 1, "dog") end
+	end
+	if data.petCounts ~= nil then localData.petCounts = data.petCounts end
+
+	if data.equippedSkin ~= nil then
+		localData.equippedSkin = type(data.equippedSkin) == "string" and data.equippedSkin or "dog"
+		if localData.equippedSkin ~= "dog" and not hasPetInList(localData.inventory, localData.equippedSkin) then localData.equippedSkin = "dog" end
+	end
+
+	if data.starPoints ~= nil then localData.starPoints = data.starPoints end
+	if data.eggDiscount ~= nil then localData.eggDiscount = data.eggDiscount end
+	if data.critChance ~= nil then localData.critChance = data.critChance end
+	if data.spUpgrades then for id,lv in pairs(data.spUpgrades) do localData.spUpgrades[id]=lv end end
+
+	if data.dailyStreak ~= nil then localData.dailyStreak = data.dailyStreak end
+	if data.totalSPEarned ~= nil then localData.totalSPEarned = data.totalSPEarned end
+	if data.lifetimeClicks ~= nil then localData.lifetimeClicks = data.lifetimeClicks end
+	if data.achievements then for id,v in pairs(data.achievements) do localData.achievements[id]=v end end
+	if data.claimedAchievements then for id,v in pairs(data.claimedAchievements) do localData.claimedAchievements[id]=v end end
+
+	if data.dailyRewardDay ~= nil then localData.dailyRewardDay = data.dailyRewardDay end
+
+	if data.pityLeg ~= nil then localData.pityLeg = data.pityLeg end
+	if data.pityMythic ~= nil then localData.pityMythic = data.pityMythic end
+	if data.nextGoal ~= nil then localData.nextGoal = data.nextGoal end
+
+	local secs = data.dailySecondsRemaining or localData.dailySecondsRemaining or 0
+	local newPhase = data.dailyIs24hPhase; if newPhase == nil then newPhase = DailyUI.is24hPhase end
+	local phaseChanged = (newPhase ~= DailyUI.is24hPhase)
+
+	local now = tick(); local clientEstimate = 0
+	if DailyUI.is24hPhase then clientEstimate = math.max(0, DailyUI.anchorSecs - (now - DailyUI.anchorTick)) else clientEstimate = math.max(0, DailyUI.sessionAnchorSecs - (now - DailyUI.sessionAnchorTick)) end
+	local drift = math.abs(secs - clientEstimate)
+	local forceReset = phaseChanged or (DailyUI.anchorTick == 0 and DailyUI.sessionAnchorTick == 0) or drift > 2
+
+	DailyUI.is24hPhase = newPhase
+	if forceReset then
+		if newPhase then DailyUI.anchorTick = now; DailyUI.anchorSecs = secs; DailyUI.sessionAnchorTick = now; DailyUI.sessionAnchorSecs = data.dailySessionSecsLeft or 0
+		else DailyUI.sessionAnchorTick = now; DailyUI.sessionAnchorSecs = secs; DailyUI.anchorSecs = 0 end
+	end
+	if DailyUI.notifBadge then DailyUI.notifBadge.Visible = (secs == 0) end
+	if DailyUI.modal and DailyUI.modal.Visible and DailyUI.refreshModal then DailyUI.refreshModal() end
+
+	if data.pendingDailyReward and S_MAIN then
+		local reward = data.pendingDailyReward; local claimed = math.max(1, (data.dailyRewardDay or 2) - 1)
+		local fl = lbl(S_MAIN, {Size=UDim2.new(0,260,0,44), Position=UDim2.new(0.5,-130,0.25,0), Text="📅 Day "..claimed.." reward claimed! +"..fmt(reward.clicks)..(( reward.sp or 0)>0 and " +"..reward.sp.."⭐" or ""), TextColor3=C.gold, TextSize=17, Font=Enum.Font.Bangers, ZIndex=60})
+		tw(fl, TweenInfo.new(2.0, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position=UDim2.new(0.5,-130,0.1,0), TextTransparency=1}):Play(); task.delay(2.1, function() fl:Destroy() end)
+	end
+
+	if data.lastSPEarned and data.lastSPEarned > 0 then
+		local fl = lbl(S_MAIN, {Size=UDim2.new(0,180,0,44), Position=UDim2.new(0.5,-90,0.3,0), Text="⭐ +" .. data.lastSPEarned .. " Star Points!", TextColor3=C.gold, TextSize=24, Font=Enum.Font.Bangers, ZIndex=60})
+		tw(fl, TweenInfo.new(1.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position=UDim2.new(0.5,-90,0.12,0), TextTransparency=1}):Play(); task.delay(1.9, function() fl:Destroy() end)
+	end
+
+	if data.newAchievements and #data.newAchievements > 0 then
+		for _, ach in ipairs(data.newAchievements) do
+			local display = nil; for _, d in ipairs(ACHIEVEMENT_DISPLAY) do if d.id == ach.id then display = d break end end
+			if display then table.insert(AchUI.toastQueue, display) end
+		end
+		if not AchUI.toastShowing then AchUI.showNextToast() end
+	end
+
+	displayedClicks = data.clicks; EggUI.clickLabel.Text = fmt(data.clicks); updateUI()
+	if data.inventory ~= nil or data.petCounts ~= nil then refreshInventory() end
+end)
+
+-- ============================================================
+-- AUTO-CPS INTERPOLATION
+-- ============================================================
+
+RunService.Heartbeat:Connect(function(dt)
+	if _G._autoClickerActive then
+		_G._autoClickAccum = (_G._autoClickAccum or 0) + dt
+		local AUTO_INTERVAL = 1 / 3
+		while _G._autoClickAccum >= AUTO_INTERVAL do
+			_G._autoClickAccum -= AUTO_INTERVAL
+			local now = tick()
+			if now - lastSqueezeTime >= 0.066 then
+				lastSqueezeTime = now
+				tw(clickBtn, FAST, {Size=UDim2.new(0,BTN_SIZE-39,0,BTN_SIZE-39), Position=UDim2.new(BTN_CX,-(BTN_SIZE-39)/2,BTN_CY,BTN_OY-(BTN_SIZE-39)/2)}):Play()
+				tw(ring1, FAST, {BackgroundTransparency=0.45}):Play()
+				task.delay(0.05, function() tw(clickBtn, BACK, {Size=UDim2.new(0,BTN_SIZE,0,BTN_SIZE), Position=UDim2.new(BTN_CX,-BTN_SIZE/2,BTN_CY,BTN_OY-BTN_SIZE/2)}):Play(); tw(ring1, MED, {BackgroundTransparency=0.7}):Play() end)
+			end
+			doClickVisual(true)
+			if now - lastClickSent >= CLICK_COOLDOWN then lastClickSent = now; RE_onClick:FireServer(1) else pendingClicks += 1 end
+		end
+	end
+
+	for _, slot in ipairs(_floatPool) do
+		if slot.active then
+			slot.y -= dt * 110; slot.alpha = math.min(1, slot.alpha + dt * 1.6)
+			slot.label.Position = UDim2.new(BTN_CX, slot.ox - 90, BTN_CY, BTN_OY + slot.y)
+			slot.label.TextTransparency = slot.alpha; slot.stroke.Transparency = slot.alpha
+			if slot.alpha >= 1 then slot.active = false end
+		end
+	end
+
+	if pendingClicks > 0 then
+		local now = tick()
+		if now - lastClickSent >= CLICK_COOLDOWN then lastClickSent = now; local batch = math.min(pendingClicks, 45); pendingClicks -= batch; RE_onClick:FireServer(batch) end
+	end
+
+	local autoCPS = localData.clicksPerSecond or 0
+	if autoCPS > 0 then displayedClicks += autoCPS * dt end
+
+	if currentScreen == 4 then
+		achRefreshAccum = (achRefreshAccum or 0) + dt
+		if achRefreshAccum >= 0.25 then achRefreshAccum = 0; refreshAchievements() end
+	end
+
+	if not headerShowingSP then
+		headerClickLabel.Text = fmt(displayedClicks); local totalCPS = autoCPS + getManualCPS(); headerCPSLabel.Text = "/s: " .. fmt(totalCPS)
+	end
+	EggUI.clickLabel.Text = fmt(displayedClicks)
+
+	-- ¦¦ AKTUALIZACJA NEXT GOAL ¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦¦
+	if _G.nextGoalName then
+		renderNextGoal()
+	end
+
+	for id, ui in pairs(upgradeBtns) do
+		if ui.hovered then continue end
+		local lv = localData.upgrades[id] or 0
+		if lv < ui.upg.maxLevel then
+			local cost = getUpgradeCost(ui.upg); local canAfford = displayedClicks >= cost
+			local targetBg = canAfford and C.gold or Color3.fromRGB(70,55,10); local targetText = canAfford and Color3.fromRGB(0,0,0) or C.grey
+			if ui.buyBtn.BackgroundColor3 ~= targetBg then ui.buyBtn.BackgroundColor3 = targetBg; ui.buyBtn.TextColor3 = targetText end
+		end
+	end
+end)
+
+-- ============================================================
+-- ADMIN PANEL UI
+-- ============================================================
+
+task.spawn(function()
+	local ADMIN_BG = Color3.fromRGB(8, 5, 20); local ADMIN_BORDER = Color3.fromRGB(255, 60, 120); local ADMIN_GOLD = Color3.fromRGB(255, 200, 60); local ADMIN_RED = Color3.fromRGB(255, 55, 55); local ADMIN_GREEN = Color3.fromRGB(60, 220, 120); local ADMIN_GREY = Color3.fromRGB(130, 120, 170)
+
+	local adminToggleBtn = tbtn(screenGui, {Size = UDim2.new(0, 72, 0, 30), Position = UDim2.new(0, 8, 1, -NAV_H - 38), BackgroundColor3 = Color3.fromRGB(30, 10, 40), Text = "⚙ ADMIN", TextColor3 = ADMIN_BORDER, TextSize = 11, Font = Enum.Font.GothamBold, ZIndex = 80, Visible = false})
+	corner(adminToggleBtn, UDim.new(0, 8)); uistroke(adminToggleBtn, ADMIN_BORDER, 1, 0.1)
+
+	local adminDimmer = tbtn(screenGui, {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.fromRGB(0, 0, 0), BackgroundTransparency = 0.55, Text = "", AutoButtonColor = false, ZIndex = 81, Visible = false})
+
+	local PANEL_W, PANEL_H = 480, 430
+	local adminPanel = frm(screenGui, {Size = UDim2.new(0, PANEL_W, 0, PANEL_H), Position = UDim2.new(0.5, -PANEL_W/2, 0.5, -PANEL_H/2), BackgroundColor3 = ADMIN_BG, ZIndex = 82, Visible = false})
+	corner(adminPanel, UDim.new(0, 16)); uistroke(adminPanel, ADMIN_BORDER, 2, 0)
+	frm(adminPanel, {Size = UDim2.new(1, 0, 0, 4), BackgroundColor3 = ADMIN_BORDER, ZIndex = 83})
+	lbl(adminPanel, {Size = UDim2.new(1, 0, 0, 44), Position = UDim2.new(0, 0, 0, 4), Text = "⚙  ADMIN PANEL  ⚙", TextColor3 = ADMIN_BORDER, TextSize = 26, Font = Enum.Font.Bangers, ZIndex = 83})
+
+	local adminCloseBtn = tbtn(adminPanel, {Size = UDim2.new(0, 36, 0, 36), Position = UDim2.new(1, -44, 0, 8), BackgroundColor3 = Color3.fromRGB(50, 10, 25), Text = "✕", TextColor3 = ADMIN_RED, TextSize = 18, Font = Enum.Font.GothamBold, ZIndex = 84})
+	corner(adminCloseBtn, UDim.new(0, 8)); uistroke(adminCloseBtn, ADMIN_RED, 1, 0.3)
+	frm(adminPanel, {Size = UDim2.new(0.92, 0, 0, 1), Position = UDim2.new(0.04, 0, 0, 50), BackgroundColor3 = Color3.fromRGB(60, 30, 80), ZIndex = 83})
+
+	lbl(adminPanel, {Size = UDim2.new(0, 90, 0, 24), Position = UDim2.new(0, 16, 0, 58), Text = "Gracz:", TextColor3 = ADMIN_GREY, TextSize = 13, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 83})
+	local targetInput = Instance.new("TextBox"); targetInput.Size = UDim2.new(0, 200, 0, 28); targetInput.Position = UDim2.new(0, 110, 0, 56); targetInput.BackgroundColor3 = Color3.fromRGB(18, 14, 35); targetInput.TextColor3 = C.white; targetInput.PlaceholderText = "nazwa lub _self"; targetInput.PlaceholderColor3 = ADMIN_GREY; targetInput.Text = "_self"; targetInput.TextSize = 13; targetInput.Font = Enum.Font.GothamMedium; targetInput.ClearTextOnFocus = false; targetInput.ZIndex = 83; corner(targetInput, UDim.new(0, 6)); uistroke(targetInput, ADMIN_BORDER, 1, 0.5); targetInput.Parent = adminPanel
+
+	lbl(adminPanel, {Size = UDim2.new(0, 90, 0, 24), Position = UDim2.new(0, 16, 0, 94), Text = "Wartość:", TextColor3 = ADMIN_GREY, TextSize = 13, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 83})
+	local amountInput = Instance.new("TextBox"); amountInput.Size = UDim2.new(0, 200, 0, 28); amountInput.Position = UDim2.new(0, 110, 0, 92); amountInput.BackgroundColor3 = Color3.fromRGB(18, 14, 35); amountInput.TextColor3 = C.white; amountInput.PlaceholderText = "np. 1000000"; amountInput.PlaceholderColor3 = ADMIN_GREY; amountInput.Text = "1000000"; amountInput.TextSize = 13; amountInput.Font = Enum.Font.GothamMedium; amountInput.ClearTextOnFocus = false; amountInput.ZIndex = 83; corner(amountInput, UDim.new(0, 6)); uistroke(amountInput, ADMIN_BORDER, 1, 0.5); amountInput.Parent = adminPanel
+
+	local BTN_AREA_Y = 132
+	local btnArea = frm(adminPanel, {Size = UDim2.new(1, -24, 0, 178), Position = UDim2.new(0, 12, 0, BTN_AREA_Y), BackgroundTransparency = 1, ZIndex = 83})
+
+	local ADMIN_CMDS = { { cmd="give_clicks", label="💰 Give Clicks", color=ADMIN_GOLD, usesAmount=true }, { cmd="give_sp", label="⭐ Give SP", color=ADMIN_GOLD, usesAmount=true }, { cmd="set_prestige", label="💫 Set Prestige", color=C.cyan, usesAmount=true }, { cmd="reset_all", label="💣 RESET ALL DATA", color=ADMIN_RED, usesAmount=false, confirm=true } }
+	local COL_N, BTN_W, BTN_H, BTN_GAP = 2, (PANEL_W - 24 - (2 - 1) * 8) / 2, 40, 8
+
+	for i, def in ipairs(ADMIN_CMDS) do
+		local col = (i - 1) % COL_N; local row = math.floor((i - 1) / COL_N); local bx = col * (BTN_W + BTN_GAP); local by = row * (BTN_H + BTN_GAP)
+		local b = tbtn(btnArea, {Size = UDim2.new(0, BTN_W, 0, BTN_H), Position = UDim2.new(0, bx, 0, by), BackgroundColor3 = Color3.fromRGB(18, 12, 35), Text = def.label, TextColor3 = def.color, TextSize = 13, Font = Enum.Font.GothamBold, ZIndex = 84})
+		corner(b, UDim.new(0, 10)); uistroke(b, def.color, 1, 0.35)
+		b.MouseEnter:Connect(function() tw(b, FAST, { BackgroundColor3 = Color3.fromRGB(35, 22, 60) }):Play() end); b.MouseLeave:Connect(function() tw(b, FAST, { BackgroundColor3 = Color3.fromRGB(18, 12, 35) }):Play() end)
+
+		local waitingConfirm, confirmConn = false, nil
+		b.MouseButton1Click:Connect(function()
+			local target, amount = targetInput.Text, amountInput.Text; if not RE_adminCmd then return end
+			if not def.confirm then RE_adminCmd:FireServer(def.cmd, target, amount); return end
+			if waitingConfirm then return end
+			waitingConfirm = true; b.Text = "⚠ KLIKNIJ PONOWNIE!"; b.TextColor3 = Color3.fromRGB(255, 40, 40)
+			confirmConn = b.MouseButton1Click:Once(function() waitingConfirm = false; confirmConn = nil; RE_adminCmd:FireServer(def.cmd, target, amount); b.Text = def.label; b.TextColor3 = def.color end)
+			task.delay(3, function() if waitingConfirm then waitingConfirm = false; if confirmConn then confirmConn:Disconnect(); confirmConn = nil end; b.Text = def.label; b.TextColor3 = def.color end end)
+		end)
+	end
+
+	frm(adminPanel, {Size = UDim2.new(0.92, 0, 0, 1), Position = UDim2.new(0.04, 0, 0, BTN_AREA_Y + 178 + 6), BackgroundColor3 = Color3.fromRGB(60, 30, 80), ZIndex = 83})
+
+	local LOG_Y = BTN_AREA_Y + 178 + 14
+	local logBg = frm(adminPanel, {Size = UDim2.new(1, -24, 0, PANEL_H - LOG_Y - 16), Position = UDim2.new(0, 12, 0, LOG_Y), BackgroundColor3 = Color3.fromRGB(12, 8, 26), ZIndex = 83})
+	corner(logBg, UDim.new(0, 8)); uistroke(logBg, Color3.fromRGB(60, 30, 80), 1, 0.4)
+	lbl(logBg, {Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 0, 4), Text = "LOG", TextColor3 = ADMIN_GREY, TextSize = 10, Font = Enum.Font.GothamBold, ZIndex = 84})
+	local logLabel = lbl(logBg, {Size = UDim2.new(1, -12, 1, -24), Position = UDim2.new(0, 6, 0, 20), Text = "Gotowy.", TextColor3 = C.white, TextSize = 12, Font = Enum.Font.GothamMedium, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 84})
+
+	local adminOpen = false
+	local function setAdminOpen(open)
+		adminOpen = open; adminDimmer.Visible = open; adminPanel.Visible = open
+		if open then adminPanel.BackgroundTransparency = 1; tw(adminPanel, MED, { BackgroundTransparency = 0 }):Play() end
+	end
+
+	adminToggleBtn.MouseButton1Click:Connect(function() setAdminOpen(not adminOpen) end)
+	adminCloseBtn.MouseButton1Click:Connect(function() setAdminOpen(false) end)
+	adminDimmer.MouseButton1Click:Connect(function() setAdminOpen(false) end)
+
+	if RE_adminResp then RE_adminResp.OnClientEvent:Connect(function(ok, msg) local prefix = ok and "✅ " or "❌ "; local col = ok and ADMIN_GREEN or ADMIN_RED; logLabel.Text = prefix .. tostring(msg); logLabel.TextColor3 = col end) end
+	if RE_adminCheck then RE_adminCheck.OnClientEvent:Connect(function() adminToggleBtn.Visible = true end) end
+end)
